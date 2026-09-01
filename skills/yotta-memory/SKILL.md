@@ -1,7 +1,7 @@
 ---
 name: yotta-memory
 description: "元忆 —— 有权限边界的文件式智能体记忆。文件式、零依赖、可 diff/回滚：让任何 AI 智能体活过会话，开工 recall 恢复上下文、重要信息 remember 落盘、收工归档。类型体系 FACT（公共共享）/ PREF / BOUND / COMMIT（私密隔离）。触发：记住、别忘了、记一笔、记忆、remember、recall、跨会话、上次说到、续测、交接、归档、记忆盘、共享记忆、局域网记忆、画像、开工上下文、记忆守则、profile、context、越用越懂、语义检索、反馈、维护、蒸馏、feedback、maintain、distill、explain、自我学习、自我进化、自我提升、查看平台分页、recall 候选预过滤"
-version: 0.8.5
+version: 0.8.7
 license: MIT
 ---
 
@@ -322,6 +322,16 @@ license: MIT
 
 ### 4.10 复用
 - 成功后优先复用现有连接；失败（token 吊销等）再回 4.3。
+
+## 常见问题 FAQ（速查）
+
+常见问题与避坑见 `references/faq.md`：
+- 类型选错 → 只提示不阻止；`forget` 后按正确类型重写；
+- 私密区加密 → `init` 默认加密（主口令+恢复钥匙），明文库 `migrate` 升级，`view` 平台口令解锁；
+- 多智能体权限 → FACT 公共、私密按 owner 隔离，需 `key authorize` / `view` 授权；
+- 记忆找不到 → `config get` 查位置 → `reindex` → `recall` / `search`；
+- 忘记主口令 → 用恢复钥匙 `reset-password`；
+- 局域网 → 引擎 `lan enable` + `token new`，客户端配 url+token。
 
 ## 渐进披露
 
