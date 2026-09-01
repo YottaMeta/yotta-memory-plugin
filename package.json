@@ -1,0 +1,32 @@
+{
+  "name": "@yottameta/yotta-memory-plugin",
+  "version": "0.8.5",
+  "description": "Yuanyi (元忆) — boundary-aware, file-based memory for AI agents, packaged as a YottaMeta Agent Plugin.",
+  "license": "MIT",
+  "keywords": [
+    "yottameta",
+    "agent-plugins",
+    "agent-skills",
+    "mcp",
+    "yotta-memory"
+  ],
+  "homepage": "https://github.com/YottaMeta/yotta-memory-plugin",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YottaMeta/yotta-memory-plugin.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "plugin.json",
+    "mcp.json",
+    "skills",
+    ".agents",
+    ".claude-plugin",
+    "README.md",
+    "LICENSE",
+    "!**/__pycache__/**",
+    "!**/*.pyc"
+  ]
+}

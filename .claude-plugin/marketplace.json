@@ -1,0 +1,25 @@
+{
+  "name": "yotta-memory",
+  "interface": {
+    "displayName": "元忆 yotta-memory (YottaMeta)"
+  },
+  "plugins": [
+    {
+      "name": "yotta-memory",
+      "source": ".",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity",
+      "version": "0.8.5",
+      "description": "Yuanyi (元忆) — boundary-aware, file-based memory for AI agents. File-based, zero-dependency, diff/rollback-able; FACT/PREF/BOUND/COMMIT four types (public shared / private isolated), user-level + project-level storage; v0.8 semantic search + usage feedback loop + rule-layer self-organization + psychological-log distillation (self-learning/self-evolving/self-improving).",
+      "interface": {
+        "displayName": "元忆 yotta-memory",
+        "shortDescription": "Yuanyi (元忆) — boundary-aware, file-based memory for AI agents. File-based, zero-dependency, diff/rollback-able; FACT/PRE",
+        "developerName": "YottaMeta",
+        "category": "Productivity"
+      }
+    }
+  ]
+}
