@@ -1,6 +1,6 @@
 # 元忆 yotta-memory — Agent Plugin
 
-File-based agent memory with permission boundaries, packaged as an Agent Plugin with a built-in MCP server (remember / recall / context / archive).
+File-based agent memory with permission boundaries, packaged as an Agent Plugin with a built-in MCP server (remember / recall / search / context).
 
 [English](#english) | [中文](#中文)
 

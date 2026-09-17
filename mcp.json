@@ -7,7 +7,9 @@
       "args": [
         "${PLUGIN_ROOT}/skills/yotta-memory/bin/yotta-memory.js",
         "serve",
-        "--stdio"
+        "--stdio",
+        "--tools",
+        "core"
       ]
     }
   }

@@ -9,7 +9,7 @@
 `init` 默认初始化加密库（需主口令 + 恢复钥匙，请妥善保存）；明文库可用 `migrate` 升级为加密。私密区文件为 `.md.enc`，可 git 版本化。查看/授权用 `yotta-memory view`（口令解锁，浏览/授权/吊销 AI）；授权时一次性展示的 `agent_key` 请立即保存，服务端同时写 `keys/pending/<id>.key` 供该 AI 新会话用 `key claim` 领取。出现 `[YTM_MIGRATION_REQUIRED]` 说明还有 agent 未绑定，请由你在 `view` 平台逐个点「授权」完成重新授权（AI 只提醒、不代执行）。
 
 ## 3. 多智能体权限怎么隔离？
-公共 FACT 所有智能体可读；PREF / BOUND / COMMIT 按 owner 物理隔离，调用方必须持有匹配的 `agent_key`（用户执行 `key bind <id>`，或在 `view` 平台授权获得）。owner ID 单独存在不构成认证，不授权 / 无 key 读不到。私密操作缺 key 时会输出 `[YTM_MIGRATION_REQUIRED]`；授权完成后该标记消失。AI 新会话用 `key status <id> --to <AI_HOME>` 检查，pending 存在则 `key claim <id> --to <AI_HOME>` 落到 `<AI_HOME>/.yotta-memory-agent-key`；吊销后旧 key 立即校验失败，需重新授权。
+公共 FACT 所有智能体可读；PREF / BOUND / COMMIT 按 owner 物理隔离，调用方必须持有匹配的 `agent_key`（用户执行 `key bind <id>`，或在 `view` 平台授权获得）。owner ID 单独存在不构成认证，不授权 / 无 key 读不到。私密操作缺 key 时会输出 `[YTM_MIGRATION_REQUIRED]`；授权完成后该标记消失。AI 新会话用 `key status <id>` 检查，pending 存在则 `key claim <id>` 落到 `<AI_HOME>/.yotta-memory-agent-key`；`AI_HOME` 默认规则由 claim / status 共用（显式 `--to` / `--agent-key-file` > `YOTTA_MEMORY_AGENT_HOME` / `YOTTA_MEMORY_AGENT_KEY_FILE` > Codex / OpenCode / 通用宿主默认），status 会显示 `checked` 与 `discovery`。吊销后旧 key 立即校验失败，需重新授权。
 
 ## 4. 记忆找不到了？
 先 `config get` 确认 `memory_home` 指向的库；再 `reindex` 重建索引（升级后索引版本变化会自动重建）；最后 `recall <关键词>` / `search <词>` 语义检索。跨项目记忆在项目级 `.yottamemory`。
@@ -23,11 +23,14 @@
 ## 7. MCP 工具没加载？
 检查客户端 `mcpServers` 已配置 yotta-memory（url + token + agent_key）；agent_key 应来自 `<AI_HOME>/.yotta-memory-agent-key` 或 MCP secret 注入，不把明文 key 写进对话。改配置后重启/重载会话。本机直连可不配 MCP，直接用 CLI。
 
+## 7.1 MCP 工具太多，想减少常驻工具？
+用 `serve --tools core` 启动，工具列表只保留 `context / recall / search / remember`；需要 `doctor`、`forget`、`maintain`、`distill` 等完整能力时改用 `--tools full`。未指定 `--tools` 时默认仍为 `full`，不会影响已有配置。
+
 ## 8. 记忆库在哪个目录？
 `yotta-memory config get` 查看；`config set memory_home <目录>` 改位置。项目级记忆用 `init --project`（存 `.yottamemory/` 随项目共享）。
 
 ## 9. 跨会话恢复上下文？
-开工运行 `yotta-memory context`（身份 + 画像 + 近期记忆 + 边界 + 承诺），需要细节再 `recall <关键词>`。
+开工运行 `yotta-memory context`（身份 + 铁律 + 画像 + 长期摘要 + 近期走廊 + 近期高价值 + 边界 + 承诺 + 会话闭环契约），需要细节再 `recall <关键词>`；摘要优先来自 `consolidate` 产物，收工前按闭环契约复盘并检查关键结论是否落盘。
 
 ## 10. 备份与迁移？
 优先使用 `backup create --dir <独立盘目录>` 创建整库备份；`backup list` 查看，`backup doctor` 校验 SHA-256，`backup restore <id> --to <新目录>` 恢复到新目录。备份默认拒绝与记忆库同卷。`export --out 文件.json` 仍可用于跨工具迁移；公共 FACT 是明文文件也可直接 git 备份。v0.12.2 起，破坏性操作也会在写入前自动创建事务快照。

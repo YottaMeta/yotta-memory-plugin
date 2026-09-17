@@ -42,6 +42,8 @@
 
 - **agent ID 必须全局唯一**：`iam <id>` 写入 `agents.json`（记忆库根目录），唯一性强制——ID 已被其它主机 / 来源（含远端 token 登记）占用则拒绝，确认是同一智能体才 `--force`。
 - **当次身份声明**：`whoami` / MCP `agent_info` 读「当次显式身份」——CLI 用 `--agent`，MCP 用 per-process `YOTTA_AGENT_ID` + `YOTTA_MEMORY_AGENT_KEY` + `YOTTA_MEMORY_TRUST_ENV_AGENT=1`；远端用 `X-Agent-Id` + `X-Agent-Key` 请求头（经 token 绑定校验）。不接受用户级全局 fallback。
+- **身份优先级（v0.14.0）**：显式 `--agent` 优先；非受信 ambient `YOTTA_AGENT_ID` 被忽略，只有 `YOTTA_MEMORY_TRUST_ENV_AGENT=1` 时环境身份才参与判定。受信环境身份与显式身份冲突仍拒绝。
+- **AI_HOME（v0.14.0）**：`key status` / `key claim` 共用发现规则——显式 `--to <目录>` / `--agent-key-file <文件>` > `YOTTA_MEMORY_AGENT_HOME` / `YOTTA_MEMORY_AGENT_KEY_FILE` > 宿主默认（Codex `$CODEX_HOME` 或 `~/.codex`；OpenCode `$XDG_CONFIG_HOME/opencode`；通用 `~/.<agent_id>`），文件名统一为 `.yotta-memory-agent-key`。status 输出 `checked` 与 `discovery`。
 - **自我档案**：`iam` 自动写一条 PREF `subject=自我接入档案`（owner=自己），statement 为 `; ` 分隔的 key:value——`agent_id / host / memory_home / mcp_mode(stdio|http) / engine_url(仅远端) / token(仅远端；本机不存 token)`，可含 `agent_name / user_name / relationship`（`iam --name/--user/--relationship` 写入）。
 - **私密记忆必须有 owner**：PREF / BOUND / COMMIT 写入时未声明身份（owner 空）直接拒绝（公共 FACT 不受影响），从机制上防止「抄别人的 ID」。
 
@@ -92,7 +94,7 @@ immutable: false
 - **UMK（用户主密钥）**：主口令 PBKDF2-SHA256（600000 次迭代 + 随机 16B 盐，盐存 `keys/salt`）派生，永不落盘明文。
 - **Owner Key**：每 owner 随机 32B；被 UMK 包裹存 `keys/<owner>.key.enc`（头 `YTMKEY1`，AAD=`owner:<id>`），被恢复钥匙包裹存 `keys/<owner>.key.recovery`。
 - **恢复钥匙（RK）**：随机 32B；被 UMK 包裹存 `keys/recovery.key.enc`（AAD=`recovery`），初始化/迁移时向用户打印一次（base64）。忘口令时用户提供 RK → 解开 `*.key.recovery` → 重设口令。
-- **agent_key 绑定**：由用户执行 `key bind <id>` 或在 `view` 平台授权，生成 32 字节 agent_key，只展示一次；owner key 由 agent_key 包裹写入 `keys/bindings/<id>.key.agent`（AES-256-GCM），同时写临时待领取文件 `keys/pending/<id>.key`。AI 新会话用 `key status <id> --to <AI_HOME>` / `key claim <id> --to <AI_HOME>` 领取到 `<AI_HOME>/.yotta-memory-agent-key`，claim 成功后删除 pending。本机 MCP 用 `YOTTA_MEMORY_AGENT_KEY`，远程 MCP 用 `X-Agent-Key`，CLI 用 `--agent-key/--agent-key-file`；调用方必须提供 `agent_id + agent_key` 才能解出 owner key；UMK 永不接触 AI。`key revoke` 删除 binding 与 pending，旧 key 随即校验失败。`key list` 与私密操作失败时输出 `[YTM_MIGRATION_REQUIRED]`，AI 只负责把迁移步骤转达给用户。
+- **agent_key 绑定**：由用户执行 `key bind <id>` 或在 `view` 平台授权，生成 32 字节 agent_key，只展示一次；owner key 由 agent_key 包裹写入 `keys/bindings/<id>.key.agent`（AES-256-GCM），同时写临时待领取文件 `keys/pending/<id>.key`。AI 新会话用 `key status <id>` / `key claim <id>` 领取到 `<AI_HOME>/.yotta-memory-agent-key`，需要时显式加 `--to` / `--agent-key-file`，claim 成功后删除 pending。本机 MCP 用 `YOTTA_MEMORY_AGENT_KEY`，远程 MCP 用 `X-Agent-Key`，CLI 用 `--agent-key/--agent-key-file`；调用方必须提供 `agent_id + agent_key` 才能解出 owner key；UMK 永不接触 AI。`key revoke` 删除 binding 与 pending，旧 key 随即校验失败。`key list` 与私密操作失败时输出 `[YTM_MIGRATION_REQUIRED]`，AI 只负责把迁移步骤转达给用户。
 
 ### 密文记忆文件（`.md.enc`，头 `YTMENC1`）
 ```
@@ -158,7 +160,7 @@ magic "YTMIDX1" (7B) | nonce(12B) | tag(16B) | ciphertext(JSON: {version, update
 | `export [--out f.json]` | 导出全部记忆为 JSON |
 | `import <f.json>` | 从 JSON 导入（幂等）|
 | `profile [--owner <id>]` | 用户画像聚合（零推断，写 `private/<owner>/profile.md`；跨 owner 默认拒绝）|
-| `context [--limit N] [--owner <id>] [--budget N]` | 开工上下文包（stdout：身份 + 多智能体铁律 + 画像 + 近期记忆 + 边界 + 承诺；`--budget` 近期记忆字符预算）|
+| `context [--limit N] [--owner <id>] [--budget N] [--focus <关键词>] [--explain]` | 开工上下文包（stdout：身份 + 多智能体铁律 + 画像 + 长期摘要 + 任务相关记忆 + 近期走廊 + 近期高价值 + 边界 + 承诺 + 会话闭环契约；`--budget` 控制动态记忆字符预算）|
 | `iam <id> [--name] [--user] [--relationship] [--force]` | 登记身份 + 自我档案（可选扩展显示名 / 用户 / 关系）|
 
 
@@ -169,14 +171,25 @@ magic "YTMIDX1" (7B) | nonce(12B) | tag(16B) | ciphertext(JSON: {version, update
 - 权限：profile.md 属私密区（按 owner）；跨 owner 生成默认拒绝（exit 3），需 `--owner user` / `--unsafe` / grant 授权。
 - profile.md 为生成物，可随时重新生成；不进入 index.json。
 
-### context（开工上下文包，v0.6.0）
+### context（开工上下文包，v0.6.0 + v0.14.0）
 
-- `context [--limit N] [--owner <id>] [--budget N]`：stdout 输出开工上下文包（不落盘），含多智能体接入铁律段（可读 A/B/C、可写范围、违规红线）与五段：
+- `context [--limit N] [--owner <id>] [--budget N] [--focus <关键词>] [--explain]`：stdout 输出开工上下文包（不落盘），含多智能体接入铁律段（可读 A/B/C、可写范围、违规红线）与以下部分：
   1. 身份：agent_id / agent_name / user_name / relationship / host / memory_home（读自我档案）
   2. 用户画像摘要：profile.md（不存在则自动生成一次或降级跳过）
-  3. 近期记忆：按 importance（confidence × recency + updated + weight + immutable）排序前 N 条（默认 10），读取分区过滤；`--budget` 时按剩余字符预算逐条放行（身份/铁律/画像/边界/承诺 必保）
-  4. 边界提醒：BOUND 全列（可读范围内）
-  5. 承诺 / 锚点：COMMIT 全列（可读范围内）
+  2.5 长期理解摘要：优先加载 `consolidate` 产物（`source=consolidate` 或 tags `consolidate` + `summary`），默认最多 3 条，只注入 subject + statement；细节用 `recall` 下钻。
+  2.6 任务相关记忆（`--focus`）：任务关键词命中条目。
+  3. 近期走廊：按 `updated / created` 倒序取样，默认数量沿用 `--limit`，不受 utility 排序影响；排除摘要、BOUND / COMMIT 与已展示条目。
+  4. 近期高价值记忆（补位）：按 importance + utility 融合排序，补足未进入走廊 / focus 的条目，按文件去重。
+  5. 边界提醒：BOUND 全列（可读范围内）。
+  6. 承诺 / 锚点：COMMIT 全列（可读范围内）。
+  7. 本会话闭环契约：固定输出开工加载、进行中立即 `remember --verify`、收工前复盘检查 COMMIT / 会话小结。
+- `--budget`：控制 focus / 近期走廊 / 近期高价值等动态记忆的字符预算；身份、铁律、画像、长期摘要、边界、承诺与会话闭环契约必保。
+
+### MCP 工具分组（v0.15.0）
+
+- `yotta-memory serve --stdio --tools core`：只暴露 `context / recall / search / remember`，适合常驻 MCP。
+- `yotta-memory serve --stdio --tools full`：暴露现有 16 个工具，适合诊断、维护、导入导出与自我学习操作。
+- 未指定 `--tools`：默认 `full`，保持旧配置兼容；`tools/list` 按当前分组返回，`tools/call` 越组调用会被拒绝并提示切换到 full。
 
 ### remember / iam 扩展（v0.6.0）
 
