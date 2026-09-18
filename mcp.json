@@ -9,7 +9,11 @@
         "serve",
         "--stdio",
         "--tools",
-        "core"
+        "core",
+        "--agent-id",
+        "${AGENT_ID}",
+        "--agent-key-file",
+        "${AGENT_KEY_FILE}"
       ]
     }
   }

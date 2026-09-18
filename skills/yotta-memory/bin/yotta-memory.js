@@ -22,8 +22,9 @@ const os = require('os');
 const crypto = require('crypto');
 const http = require('http');
 const child_process = require('child_process');
+const { AsyncLocalStorage } = require('async_hooks');
 
-const VERSION = '0.15.0';
+const VERSION = '0.16.0';
 // @generated view-html:start
 const VIEW_HTML = "<!doctype html><html lang=\"zh\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>元忆 · 用户查看平台</title><style>\r\nbody{font-family:system-ui,-apple-system,\"Microsoft YaHei\",sans-serif;max-width:1000px;margin:24px auto;padding:0 16px;color:#1f2328;background:#fafafa}\r\nh1{font-size:22px} .card{background:#fff;border:1px solid #e2e2e2;border-radius:10px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.04)}\r\nbutton{background:#2563eb;color:#fff;border:0;border-radius:6px;padding:7px 14px;cursor:pointer;margin:2px;font-size:14px}\r\nbutton.danger{background:#dc2626} button.ghost{background:#e5e7eb;color:#1f2328}\r\ninput,select{padding:8px;border:1px solid #c9c9c9;border-radius:6px;margin:2px;font-size:14px;box-sizing:border-box}\r\ntable{border-collapse:collapse;width:100%;font-size:13px} td,th{border:1px solid #ececec;padding:6px 8px;text-align:left;vertical-align:top}\r\n.owner{display:inline-flex;align-items:center;gap:6px;border:1px solid #ddd;border-radius:8px;padding:5px 10px;margin:4px 6px 4px 0;background:#f6f8fa}\r\n.entry{border-bottom:1px solid #eee;padding:8px 0} .meta{color:#8a8a8a;font-size:12px}\r\n.err{color:#dc2626;margin-top:8px} .ok{color:#16a34a;margin-top:8px}\r\n#app{display:none} code{background:#f0f0f0;padding:1px 5px;border-radius:4px;font-size:12px}\r\n</style></head><body>\r\n<h1>元忆 · 用户查看平台 <span id=\"ver\" style=\"font-size:14px;color:#888\"></span></h1>\r\n<div id=\"lock\" class=\"card\">\r\n  <p><b>输入主口令解锁</b>（口令只在本地内存派生，不落盘、不发送远端）。忘口令可在 CLI 用恢复钥匙重设：<code>yotta-memory reset-password --recovery-key &lt;钥匙&gt;</code></p>\r\n  <input type=\"password\" id=\"pw\" placeholder=\"主口令\" style=\"width:260px\">\r\n  <button onclick=\"unlock()\">解锁</button>\r\n  <div class=\"err\" id=\"lockerr\"></div>\r\n</div>\r\n<div id=\"app\">\r\n  <div class=\"card\">\r\n    <b>AI 列表</b>（✅=已授权可读自己私密，🔒=未授权）\r\n    <div class=\"meta\" style=\"margin-top:6px\">「授权」由你（用户）操作：确认后生成只显示一次的 agent_key，请立即单独保存；服务端同时写临时待领取文件 <code>keys/pending/&lt;agent_id&gt;.key</code>，供该 AI 新会话领取，领取成功后自动删除。</div>\r\n    <div id=\"owners\" style=\"margin-top:8px\"></div>\r\n  </div>\r\n  <div class=\"card\">\r\n    <b>记忆</b>\r\n    <input id=\"q\" placeholder=\"搜索关键词\" style=\"width:220px\" onkeydown=\"if(event.key==='Enter'){off=0;load()}\">\r\n    <button onclick=\"off=0;load()\">搜索</button>\r\n    <button class=\"ghost\" onclick=\"doExport()\">导出 JSON</button>\r\n    <button class=\"ghost\" onclick=\"showRk()\">显示恢复钥匙</button>\r\n    <span id=\"rkout\" style=\"font-size:12px;color:#888;margin-left:8px\"></span>\r\n    <div id=\"meta\" style=\"margin-top:10px;font-size:12px;color:#666\"></div>\r\n    <div id=\"entries\" style=\"margin-top:6px\"></div>\r\n    <div id=\"pager\" style=\"margin-top:10px\">\r\n      <button class=\"ghost\" id=\"prevb\" onclick=\"prevPage()\">上一页</button>\r\n      <span id=\"pageinfo\" style=\"font-size:12px;color:#888;margin:0 8px\"></span>\r\n      <button class=\"ghost\" id=\"nextb\" onclick=\"nextPage()\">下一页</button>\r\n    </div>\r\n  </div>\r\n  <div class=\"card\">\r\n    <b>重设口令</b><br>\r\n    <input type=\"password\" id=\"cur\" placeholder=\"当前口令\">\r\n    <input type=\"password\" id=\"np1\" placeholder=\"新口令\">\r\n    <input type=\"password\" id=\"np2\" placeholder=\"确认新口令\">\r\n    <button onclick=\"resetPw()\">重设</button>\r\n    <span id=\"pwout\"></span>\r\n  </div>\r\n</div>\r\n<script>\r\nfunction esc(s){return String(s==null?'':s).replace(/[&<>\"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c];});}\r\nasync function api(p,b){try{const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});return await r.json();}catch(e){return{error:String(e)};}}\r\nasync function boot(){const s=await api('/api/status');document.getElementById('ver').textContent='v'+(s.version||'');if(s.unlocked){showApp();}}\r\nfunction showApp(){document.getElementById('lock').style.display='none';document.getElementById('app').style.display='block';loadOwners();load();}\r\nasync function unlock(){const d=await api('/api/unlock',{password:document.getElementById('pw').value});if(d.error){document.getElementById('lockerr').textContent=d.error;return;}showApp();}\r\nasync function loadOwners(){const d=await api('/api/owners');const box=document.getElementById('owners');box.innerHTML='';if(!d.owners||!d.owners.length){box.innerHTML='（无 owner）';return;}\r\n  for(const o of d.owners){const c=document.createElement('span');c.className='owner';c.innerHTML=esc(o.owner)+(o.authorized?' ✅':' 🔒')+' <button class=\"ghost\" data-a=\"'+esc(o.owner)+'\">授权</button><button class=\"danger\" data-r=\"'+esc(o.owner)+'\">吊销</button>';box.appendChild(c);}\r\n  box.querySelectorAll('[data-a]').forEach(function(b){b.onclick=function(){var owner=b.getAttribute('data-a');if(!confirm('确认由你为用户授权 '+owner+' 读取其私密记忆？授权后将生成只显示一次的 agent_key，请立即保存；同时写入待领取文件供该 AI 新会话领取。AI 不应代为执行该授权操作。'))return;b.disabled=true;api('/api/authorize',{owner:owner}).then(function(d){b.disabled=false;if(!d||d.error){alert((d&&d.error)||'授权失败');loadOwners();return;}if(d.agentKey){showKey(d.agentKey);}loadOwners();});};});\r\n  box.querySelectorAll('[data-r]').forEach(function(b){b.onclick=function(){if(!confirm('确认吊销 '+b.getAttribute('data-r')+' 的 agent_key？吊销后该智能体立即失去私密读写能力。'))return;api('/api/revoke',{owner:b.getAttribute('data-r')}).then(function(){loadOwners();});};});\r\nfunction showKey(k){var ov=document.createElement('div');ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:99';var box=document.createElement('div');box.className='card';box.style.cssText='max-width:640px;word-break:break-all';var t=document.createElement('div');t.innerHTML='<b>agent_key（只显示一次）</b>';var hint=document.createElement('div');hint.className='meta';hint.textContent='请用户立即单独保存。AI 新会话先执行 yotta-memory key status <agent_id>，有 pending 再执行 key claim <agent_id>；默认写入 AI_HOME/.yotta-memory-agent-key，需要时用 --to 或 --agent-key-file 指定。若 key 丢失，可吊销后重新授权；旧 key 会立即校验失败。';var ta=document.createElement('textarea');ta.readOnly=true;ta.value=k;ta.style.cssText='width:100%;height:72px;margin-top:8px;font-family:monospace;font-size:12px';var close=document.createElement('button');close.textContent='我已保存，关闭';close.onclick=function(){ov.remove();};box.appendChild(t);box.appendChild(hint);box.appendChild(ta);box.appendChild(close);ov.appendChild(box);document.body.appendChild(ov);ta.focus();ta.select();}\r\n}\r\nlet off=0,PS=50;\r\nasync function load(){const d=await api('/api/entries',{query:document.getElementById('q').value,offset:off,limit:PS});const meta=document.getElementById('meta');const pg=document.getElementById('pageinfo');if(meta)meta.textContent='共 '+d.count+' 条';const lim=d.limit||PS;const totalPg=Math.max(1,Math.ceil(d.count/lim));const curPg=Math.floor((d.offset||0)/lim)+1;if(pg)pg.textContent='第 '+curPg+' / '+totalPg+' 页';const box=document.getElementById('entries');box.innerHTML='';if(d.entries)for(const e of d.entries){const div=document.createElement('div');div.className='entry';div.innerHTML='<b>['+esc(e.type)+'] '+esc(e.subject)+'</b><div>'+esc(e.statement)+'</div><div class=\"meta\">'+esc(e.file)+' · owner='+esc(e.owner||'-')+' · '+esc(e.updated||e.created||'')+'</div>';box.appendChild(div);}const pb=document.getElementById('prevb'),nb=document.getElementById('nextb');if(pb)pb.disabled=(d.offset||0)<=0;if(nb)nb.disabled=!d.hasMore;}\r\nfunction prevPage(){if(off>=PS){off-=PS;load();}}\r\nfunction nextPage(){off+=PS;load();}\r\nasync function doExport(){const d=await api('/api/export');if(d.error){alert(d.error);return;}const blob=new Blob([JSON.stringify(d,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='yottamemory-view-export.json';a.click();}\r\nasync function showRk(){const d=await api('/api/recovery-key');document.getElementById('rkout').textContent=d.recoveryKey?('恢复钥匙: '+d.recoveryKey):(d.error||'');}\r\nasync function resetPw(){const np1=document.getElementById('np1').value,np2=document.getElementById('np2').value;if(np1!==np2){document.getElementById('pwout').innerHTML='<span class=\"err\">两次新口令不一致</span>';return;}\r\n  const d=await api('/api/reset-password',{currentPassword:document.getElementById('cur').value,newPassword:np1});document.getElementById('pwout').innerHTML=d.error?('<span class=\"err\">'+esc(d.error)+'</span>'):('<span class=\"ok\">'+esc(d.text||'ok')+'</span>');}\r\nboot();\r\n</script></body></html>\r\n";
 // @generated view-html:end
@@ -89,39 +90,531 @@ function memoryRoots() {
   }
   return out;
 }
+// ---- v0.16.0 M2: runtime stable entry ----
+const RUNTIME_SCHEMA = 1;
+function runtimeRoot() {
+  if (process.env.YOTTA_MEMORY_RUNTIME_HOME) return path.resolve(process.env.YOTTA_MEMORY_RUNTIME_HOME);
+  return path.join(path.dirname(configPath()), 'runtime');
+}
+function runtimeManifestPath() { return path.join(runtimeRoot(), 'runtime.json'); }
+function runtimeVersionsDir() { return path.join(runtimeRoot(), 'versions'); }
+function runtimeVersionDir(version) { return path.join(runtimeVersionsDir(), String(version)); }
+function runtimeCurrentDir() { return path.join(runtimeRoot(), 'current'); }
+function runtimeCurrentBin() { return path.join(runtimeCurrentDir(), 'bin', 'yotta-memory.js'); }
+function isSafeRuntimeVersion(version) {
+  const value = String(version || '').trim();
+  if (!value || value === '.' || value === '..') return false;
+  if (!/^[0-9A-Za-z][0-9A-Za-z.+-]*$/.test(value)) return false;
+  return !/[\\/]/.test(value);
+}
+function runtimePathWithin(parent, child) {
+  const p = path.resolve(parent);
+  const c = path.resolve(child);
+  return c === p || c.indexOf(p + path.sep) === 0;
+}
+function readRuntimeManifest() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(runtimeManifestPath(), 'utf8'));
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed;
+  } catch (e) {
+    return null;
+  }
+}
+function writeRuntimeManifest(manifest) {
+  fs.mkdirSync(runtimeRoot(), { recursive: true });
+  const target = runtimeManifestPath();
+  const temp = target + '.tmp-' + process.pid + '-' + Date.now();
+  fs.writeFileSync(temp, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+  fs.renameSync(temp, target);
+}
+function runtimeTreeHash(dir) {
+  const hash = crypto.createHash('sha256');
+  function walk(rel) {
+    const full = path.join(dir, rel);
+    const entries = fs.readdirSync(full, { withFileTypes: true })
+      .sort(function (a, b) { return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0); });
+    for (const entry of entries) {
+      if (entry.name === '.git' || entry.name === 'node_modules') continue;
+      const childRel = rel ? path.join(rel, entry.name) : entry.name;
+      const childFull = path.join(dir, childRel);
+      if (entry.isDirectory()) {
+        walk(childRel);
+      } else if (entry.isFile()) {
+        hash.update(childRel.replace(/\\/g, '/') + '\0');
+        hash.update(fs.readFileSync(childFull));
+        hash.update('\0');
+      }
+    }
+  }
+  walk('');
+  return hash.digest('hex');
+}
+function runtimePackageVersion(dir) {
+  const pkgPath = path.join(dir, 'package.json');
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+  const version = String(pkg.version || '').trim();
+  if (!isSafeRuntimeVersion(version)) throw new Error('runtime 包版本非法: ' + version);
+  return version;
+}
+function runtimeVerifyVersionDir(dir, expected, manifest) {
+  if (!fs.existsSync(dir)) return { error: true, text: 'runtime 版本目录不存在: ' + dir };
+  let version = '';
+  try { version = runtimePackageVersion(dir); } catch (e) { return { error: true, text: e.message }; }
+  if (version !== expected) return { error: true, text: 'runtime 版本不一致: 目录为 ' + version + '，请求 ' + expected };
+  if (!fs.existsSync(path.join(dir, 'bin', 'yotta-memory.js'))) {
+    return { error: true, text: 'runtime 版本缺少 bin/yotta-memory.js: ' + dir };
+  }
+  const treeHash = runtimeTreeHash(dir);
+  const record = manifest && manifest.versions && manifest.versions[expected];
+  if (record && record.treeHash && record.treeHash !== treeHash) {
+    return { error: true, text: 'runtime 版本内容哈希与 runtime.json 不一致；请重新安装 ' + expected, treeHash: treeHash };
+  }
+  return { error: false, treeHash: treeHash };
+}
+function compareRuntimeVersions(a, b) {
+  const pa = String(a).split('.').map(function (x) { return parseInt(x, 10) || 0; });
+  const pb = String(b).split('.').map(function (x) { return parseInt(x, 10) || 0; });
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d !== 0) return d;
+  }
+  return String(a).localeCompare(String(b));
+}
+function runtimeListVersions() {
+  const dir = runtimeVersionsDir();
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir).filter(function (name) {
+    if (!isSafeRuntimeVersion(name)) return false;
+    return fs.existsSync(path.join(dir, name, 'package.json'));
+  }).sort(function (a, b) { return compareRuntimeVersions(b, a); });
+}
+function runtimeManagedScript() {
+  const current = runtimeCurrentBin();
+  return fs.existsSync(current) ? current : __filename;
+}
+function runtimePatternToRegExp(pattern) {
+  const escaped = String(pattern).split('*').map(function (part) {
+    return part.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+  }).join('.*');
+  return new RegExp('^' + escaped + '$');
+}
+function runtimeMatchExclude(rel, pattern) {
+  const r = String(rel).replace(/\\/g, '/');
+  const p = String(pattern).replace(/\\/g, '/').replace(/^\.\//, '');
+  if (p.indexOf('*') === -1) return r === p || r.indexOf(p.replace(/\/$/, '') + '/') === 0;
+  return runtimePatternToRegExp(p).test(r);
+}
+function runtimeCopyTreeFiltered(src, dst, excludes, relBase) {
+  const base = relBase ? relBase + '/' : '';
+  const entries = fs.readdirSync(src, { withFileTypes: true });
+  fs.mkdirSync(dst, { recursive: true });
+  for (const entry of entries) {
+    if (entry.name === '.git' || entry.name === 'node_modules') continue;
+    const rel = base + entry.name;
+    if (excludes.some(function (pattern) { return runtimeMatchExclude(rel, pattern); })) continue;
+    const source = path.join(src, entry.name);
+    const target = path.join(dst, entry.name);
+    if (entry.isDirectory()) runtimeCopyTreeFiltered(source, target, excludes, rel);
+    else if (entry.isFile()) fs.copyFileSync(source, target);
+  }
+}
+function runtimeCopyTree(src, dst) {
+  const st = fs.statSync(src);
+  if (st.isDirectory()) {
+    runtimeCopyTreeFiltered(src, dst, [], '');
+  } else if (st.isFile()) {
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.copyFileSync(src, dst);
+  }
+}
+function runtimeCopyPackageFromRoot(srcRoot, dstRoot) {
+  const pkg = JSON.parse(fs.readFileSync(path.join(srcRoot, 'package.json'), 'utf8'));
+  const files = Array.isArray(pkg.files) ? pkg.files : [];
+  const includes = ['package.json'].concat(files.filter(function (entry) { return entry && entry[0] !== '!'; }));
+  const excludes = files.filter(function (entry) { return entry && entry[0] === '!'; }).map(function (entry) { return entry.slice(1); });
+  for (const entry of includes) {
+    const rel = String(entry).replace(/^\.\//, '');
+    const source = path.join(srcRoot, rel);
+    if (!fs.existsSync(source)) continue;
+    const target = path.join(dstRoot, rel);
+    const st = fs.statSync(source);
+    if (st.isDirectory()) {
+      runtimeCopyTreeFiltered(source, target, excludes, rel);
+    } else if (st.isFile() && !excludes.some(function (pattern) { return runtimeMatchExclude(rel, pattern); })) {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.copyFileSync(source, target);
+    }
+  }
+}
+function runtimeRemoveVersionDir(version) {
+  const target = runtimeVersionDir(version);
+  if (!runtimePathWithin(runtimeVersionsDir(), target)) throw new Error('拒绝删除 runtime 目录外的路径: ' + target);
+  if (fs.existsSync(target)) fs.rmSync(target, { recursive: true, force: true });
+}
+function runtimeSwitchCurrent(version) {
+  const dir = runtimeVersionDir(version);
+  if (!fs.existsSync(path.join(dir, 'package.json'))) throw new Error('runtime 版本未安装: ' + version);
+  fs.mkdirSync(runtimeRoot(), { recursive: true });
+  const temp = path.join(runtimeRoot(), '.current-' + process.pid + '-' + Date.now());
+  const current = runtimeCurrentDir();
+  try {
+    fs.symlinkSync(dir, temp, process.platform === 'win32' ? 'junction' : 'dir');
+    if (fs.existsSync(current)) {
+      const st = fs.lstatSync(current);
+      if (st.isSymbolicLink() || st.isFile()) fs.unlinkSync(current);
+      else throw new Error('current 已存在且不是可替换的指针: ' + current);
+    }
+    fs.renameSync(temp, current);
+  } catch (e) {
+    try { if (fs.existsSync(temp)) fs.unlinkSync(temp); } catch (ignore) {}
+    throw e;
+  }
+}
+function runtimeInstallPrepared(pkgRoot, version, opts) {
+  opts = opts || {};
+  if (!isSafeRuntimeVersion(version)) return { error: true, text: '非法 runtime 版本: ' + version };
+  fs.mkdirSync(runtimeVersionsDir(), { recursive: true });
+  const finalDir = runtimeVersionDir(version);
+  const staging = path.join(runtimeVersionsDir(), '.' + version + '.tmp-' + process.pid + '-' + Date.now());
+  try {
+    runtimeCopyTree(pkgRoot, staging);
+    if (runtimePackageVersion(staging) !== version) throw new Error('安装包版本与目标版本不一致');
+    if (!fs.existsSync(path.join(staging, 'bin', 'yotta-memory.js'))) throw new Error('安装包缺少 bin/yotta-memory.js');
+    const treeHash = runtimeTreeHash(staging);
+    if (fs.existsSync(finalDir)) {
+      const existingHash = runtimeTreeHash(finalDir);
+      if (existingHash === treeHash) {
+        fs.rmSync(staging, { recursive: true, force: true });
+        return { error: false, installed: false, version: version, treeHash: treeHash, path: finalDir, text: 'runtime ' + version + ' 已安装且内容一致。' };
+      }
+      if (!opts.force) throw new Error('runtime ' + version + ' 已安装且内容不同；如需覆盖请加 --force。');
+      runtimeRemoveVersionDir(version);
+    }
+    fs.renameSync(staging, finalDir);
+    const previousManifest = readRuntimeManifest();
+    const manifest = previousManifest || { schema: RUNTIME_SCHEMA, current: '', previous: '', versions: {}, updatedAt: '' };
+    manifest.schema = RUNTIME_SCHEMA;
+    manifest.versions = manifest.versions || {};
+    manifest.versions[version] = Object.assign({}, manifest.versions[version], {
+      version: version,
+      path: finalDir,
+      treeHash: treeHash,
+      installedAt: new Date().toISOString(),
+      source: opts.source || 'unknown',
+    });
+    if (!manifest.current) manifest.current = version;
+    manifest.updatedAt = new Date().toISOString();
+    writeRuntimeManifest(manifest);
+    if (manifest.current === version) {
+      try {
+        runtimeSwitchCurrent(version);
+      } catch (e) {
+        if (previousManifest) writeRuntimeManifest(previousManifest);
+        return { error: true, text: '切换 current 失败: ' + e.message };
+      }
+    }
+    return { error: false, installed: true, version: version, treeHash: treeHash, path: finalDir, text: '已安装 runtime ' + version + ' 到 ' + finalDir };
+  } catch (e) {
+    try { if (fs.existsSync(staging)) fs.rmSync(staging, { recursive: true, force: true }); } catch (ignore) {}
+    return { error: true, text: e.message };
+  }
+}
+function runtimeValidateTarballEntries(entries) {
+  const normalized = (entries || []).map(function (entry) {
+    return String(entry || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  }).filter(Boolean);
+  if (!normalized.length) throw new Error('runtime tarball 为空');
+  for (const entry of normalized) {
+    if (entry[0] === '/' || /^[A-Za-z]:/.test(entry)) throw new Error('runtime tarball 含绝对路径成员: ' + entry);
+    const parts = entry.split('/');
+    if (parts.indexOf('..') !== -1) throw new Error('runtime tarball 含路径穿越成员: ' + entry);
+    if (parts[0] !== 'package') throw new Error('runtime tarball 含 package/ 之外的成员: ' + entry);
+  }
+  if (normalized.indexOf('package/package.json') === -1) throw new Error('runtime tarball 缺少 package/package.json');
+}
+function runtimeListTarballEntries(tarball) {
+  const tarBin = process.env.YOTTA_RUNTIME_TAR || 'tar';
+  const listed = child_process.spawnSync(tarBin, ['-tzf', tarball], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+  if (listed.error) throw new Error('无法执行 tar: ' + listed.error.message);
+  if (listed.status !== 0) throw new Error('读取 runtime tarball 失败: ' + String(listed.stderr || listed.stdout || '').trim());
+  return String(listed.stdout || '').split(/\r?\n/).filter(Boolean);
+}
+function runtimeExtractTarball(tarball, tempDir) {
+  runtimeValidateTarballEntries(runtimeListTarballEntries(tarball));
+  const tarBin = process.env.YOTTA_RUNTIME_TAR || 'tar';
+  const result = child_process.spawnSync(tarBin, ['-xzf', tarball, '-C', tempDir], { encoding: 'utf8' });
+  if (result.error) throw new Error('无法执行 tar: ' + result.error.message);
+  if (result.status !== 0) throw new Error('解压 runtime tarball 失败: ' + String(result.stderr || result.stdout || '').trim());
+  const packaged = path.join(tempDir, 'package');
+  if (fs.existsSync(path.join(packaged, 'package.json'))) return packaged;
+  if (fs.existsSync(path.join(tempDir, 'package.json'))) return tempDir;
+  throw new Error('runtime tarball 中未找到 package/package.json');
+}
+function runtimeInstallFromCurrent(opts) {
+  opts = opts || {};
+  const srcRoot = path.join(__dirname, '..');
+  const pkgPath = path.join(srcRoot, 'package.json');
+  if (!fs.existsSync(pkgPath)) return { error: true, text: '当前运行时不是完整 npm 包（缺少 package.json），无法安装稳定入口。' };
+  let version = '';
+  try { version = runtimePackageVersion(srcRoot); } catch (e) { return { error: true, text: e.message }; }
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'ytm-runtime-current-'));
+  try {
+    const staged = path.join(temp, 'package');
+    runtimeCopyPackageFromRoot(srcRoot, staged);
+    return runtimeInstallPrepared(staged, version, { source: 'current', force: !!opts.force });
+  } catch (e) {
+    return { error: true, text: e.message };
+  } finally {
+    try { fs.rmSync(temp, { recursive: true, force: true }); } catch (ignore) {}
+  }
+}
+function runtimeInstallTarball(tarball, requestedVersion, opts) {
+  opts = opts || {};
+  const abs = path.resolve(String(tarball || ''));
+  if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return { error: true, text: 'runtime tarball 不存在: ' + abs };
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'ytm-runtime-tarball-'));
+  try {
+    const pkgRoot = runtimeExtractTarball(abs, temp);
+    const version = runtimePackageVersion(pkgRoot);
+    if (requestedVersion && String(requestedVersion) !== version) {
+      throw new Error('runtime 包版本 ' + version + ' 与请求版本 ' + requestedVersion + ' 不一致');
+    }
+    return runtimeInstallPrepared(pkgRoot, version, { source: abs, force: !!opts.force });
+  } catch (e) {
+    return { error: true, text: e.message };
+  } finally {
+    try { fs.rmSync(temp, { recursive: true, force: true }); } catch (ignore) {}
+  }
+}
+function runtimeNpmSpec() {
+  const candidates = [];
+  if (process.env.npm_execpath) candidates.push(process.env.npm_execpath);
+  candidates.push(path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'));
+  candidates.push(path.resolve(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'));
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(candidate)) return { command: process.execPath, args: [path.resolve(candidate)] };
+  }
+  return null;
+}
+function runtimeRunNpm(args, opts) {
+  const spec = runtimeNpmSpec();
+  if (!spec) throw new Error('无法定位 npm CLI；请改用 runtime install <本地 tarball>。');
+  const result = child_process.spawnSync(spec.command, spec.args.concat(args), {
+    cwd: (opts && opts.cwd) || process.cwd(),
+    encoding: 'utf8',
+    timeout: 120000,
+  });
+  if (result.error) throw new Error('npm 执行失败: ' + result.error.message);
+  if (result.status !== 0) throw new Error('npm 执行失败: ' + String(result.stderr || result.stdout || '').trim());
+  return result;
+}
+function runtimeInstallVersion(version, opts) {
+  const target = String(version || '').trim();
+  if (!isSafeRuntimeVersion(target)) return { error: true, text: '非法 runtime 版本: ' + target };
+  if (target === VERSION) return runtimeInstallFromCurrent(opts);
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'ytm-runtime-pack-'));
+  try {
+    fs.mkdirSync(runtimeRoot(), { recursive: true });
+    runtimeRunNpm(['pack', '@yottameta/yotta-memory@' + target, '--pack-destination', temp], { cwd: runtimeRoot() });
+    const tarball = fs.readdirSync(temp).filter(function (name) { return /\.tgz$/i.test(name); })[0];
+    if (!tarball) throw new Error('npm pack 未生成 tarball');
+    return runtimeInstallTarball(path.join(temp, tarball), target, opts);
+  } catch (e) {
+    return { error: true, text: e.message };
+  } finally {
+    try { fs.rmSync(temp, { recursive: true, force: true }); } catch (ignore) {}
+  }
+}
+function runtimeUseCore(version, opts) {
+  opts = opts || {};
+  const target = String(version || '').trim();
+  if (!isSafeRuntimeVersion(target)) return { error: true, text: '非法 runtime 版本: ' + target };
+  const manifest = readRuntimeManifest();
+  if (!manifest) return { error: true, text: 'runtime 未初始化，请先运行 yotta-memory runtime install --from-current。' };
+  const dir = runtimeVersionDir(target);
+  if (!fs.existsSync(dir)) return { error: true, text: 'runtime 版本未安装: ' + target };
+  const check = runtimeVerifyVersionDir(dir, target, manifest);
+  if (check.error) return check;
+  const previous = manifest.current && manifest.current !== target ? manifest.current : (manifest.previous && manifest.previous !== target ? manifest.previous : '');
+  const previousManifest = JSON.parse(JSON.stringify(manifest));
+  try {
+    runtimeSwitchCurrent(target);
+  } catch (e) {
+    return { error: true, text: '切换 current 失败: ' + e.message };
+  }
+  manifest.schema = RUNTIME_SCHEMA;
+  manifest.current = target;
+  manifest.previous = previous || '';
+  manifest.updatedAt = new Date().toISOString();
+  manifest.versions = manifest.versions || {};
+  manifest.versions[target] = Object.assign({}, manifest.versions[target], { treeHash: check.treeHash, lastUsedAt: new Date().toISOString() });
+  try {
+    writeRuntimeManifest(manifest);
+  } catch (e) {
+    try { if (previous) runtimeSwitchCurrent(previous); } catch (ignore) {}
+    return { error: true, text: '写入 runtime.json 失败: ' + e.message };
+  }
+  let tail = '；如需重启受管 server，请加 --restart';
+  if (opts.restart) {
+    const restart = opts.restartFn ? opts.restartFn() : runtimeRestartManagedServer();
+    if (restart && restart.error) {
+      let rollbackText = '';
+      if (previous) {
+        try {
+          runtimeSwitchCurrent(previous);
+          const rollback = JSON.parse(JSON.stringify(previousManifest));
+          rollback.current = previous;
+          rollback.previous = target;
+          rollback.updatedAt = new Date().toISOString();
+          writeRuntimeManifest(rollback);
+          (opts.restartFn ? opts.restartFn() : runtimeRestartManagedServer());
+          rollbackText = '；已回滚 current 到 ' + previous;
+        } catch (e) {
+          rollbackText = '；回滚失败: ' + e.message;
+        }
+      }
+      return { error: true, text: '受管 server 重启失败: ' + (restart.text || '') + rollbackText };
+    }
+    tail = '；受管 server 已重启';
+  }
+  return { error: false, text: '已切换 current 到 ' + target + tail + '。', version: target, treeHash: check.treeHash };
+}
+function runtimeRollbackCore(opts) {
+  const manifest = readRuntimeManifest();
+  if (!manifest || !manifest.current) return { error: true, text: 'runtime 未初始化或没有当前版本。' };
+  if (!manifest.previous) return { error: true, text: '没有可回滚的 runtime 版本。' };
+  const target = manifest.previous;
+  const result = runtimeUseCore(target, opts);
+  if (result.error) return result;
+  return { error: false, text: '已回滚 current 到 ' + target + '。' + result.text, version: target };
+}
+function runtimeStatusCore() {
+  const root = runtimeRoot();
+  const manifest = readRuntimeManifest();
+  const lines = ['runtime root: ' + root];
+  const drift = [];
+  if (!manifest) {
+    lines.push('runtime: 未初始化');
+    lines.push('提示: yotta-memory runtime install --from-current');
+    return { error: false, text: lines.join('\n'), runtimeRoot: root, drift: ['runtime manifest missing'] };
+  }
+  lines.push('current: ' + (manifest.current || '(none)'));
+  lines.push('current path: ' + runtimeCurrentDir());
+  if (manifest.previous) lines.push('previous: ' + manifest.previous);
+  if (!manifest.current) drift.push('current version missing in runtime.json');
+  else {
+    const dir = runtimeVersionDir(manifest.current);
+    if (!fs.existsSync(dir)) drift.push('current version dir missing');
+    if (!fs.existsSync(runtimeCurrentBin())) drift.push('current launcher missing');
+    else {
+      try {
+        const real = fs.realpathSync(runtimeCurrentDir());
+        if (path.resolve(real) !== path.resolve(dir)) drift.push('current pointer mismatch');
+      } catch (e) {
+        drift.push('current pointer unreadable');
+      }
+    }
+  }
+  const versions = runtimeListVersions();
+  lines.push('versions: ' + (versions.length ? versions.join(', ') : '(none)'));
+  lines.push('drift: ' + (drift.length ? drift.join('; ') : 'none'));
+  return { error: false, text: lines.join('\n'), runtimeRoot: root, manifest: manifest, drift: drift };
+}
+function runtimeListCore() {
+  const manifest = readRuntimeManifest() || { current: '', versions: {} };
+  const versions = runtimeListVersions();
+  const lines = ['runtime versions:'];
+  if (!versions.length) lines.push('  (none)');
+  for (const version of versions) {
+    const record = (manifest.versions && manifest.versions[version]) || {};
+    lines.push('  ' + version + (manifest.current === version ? '  [current]' : '') + (record.treeHash ? '  ' + record.treeHash.slice(0, 12) + '...' : ''));
+  }
+  return { error: false, text: lines.join('\n'), versions: versions, current: manifest.current || '' };
+}
+function runtimeExecutionPath() {
+  const invoked = process.argv && process.argv[1] ? path.resolve(process.argv[1]) : '';
+  if (invoked && path.basename(invoked).toLowerCase() === 'yotta-memory.js') return invoked;
+  return path.resolve(__filename);
+}
+function runtimeEnsureForManagedTask() {
+  const manifest = readRuntimeManifest();
+  if (manifest && manifest.current) {
+    const check = runtimeVerifyVersionDir(runtimeVersionDir(manifest.current), manifest.current, manifest);
+    if (!check.error && fs.existsSync(runtimeCurrentBin())) {
+      return { error: false, text: 'runtime current 已就绪: ' + manifest.current, version: manifest.current };
+    }
+  }
+  return runtimeInstallFromCurrent({ force: false });
+}
+function runtimeRestartManagedServer() {
+  const platform = lanPlatform();
+  if (platform === 'win32') {
+    const query = child_process.spawnSync('schtasks', ['/query', '/tn', LAN_TASK_NAME, '/fo', 'LIST'], { encoding: 'utf8' });
+    if (query.status !== 0) return { error: true, text: '未检测到受管计划任务 ' + LAN_TASK_NAME + '。' };
+    const end = child_process.spawnSync('schtasks', ['/end', '/tn', LAN_TASK_NAME], { encoding: 'utf8' });
+    const run = child_process.spawnSync('schtasks', ['/run', '/tn', LAN_TASK_NAME], { encoding: 'utf8' });
+    if (run.status !== 0) return { error: true, text: '计划任务重启失败: ' + String(run.stderr || run.stdout || '').trim() };
+    return { error: false, text: '已重启计划任务 ' + LAN_TASK_NAME + (end.status === 0 ? '' : '（原任务未在运行）') };
+  }
+  if (platform === 'linux') {
+    const unit = lanLinuxUnitPath();
+    if (fs.existsSync(unit) && lanFileHasMarker(unit)) {
+      const result = lanLinuxSystemctl(['restart', LAN_UNIT_NAME]);
+      if (result.status !== 0) return { error: true, text: 'systemd 重启失败: ' + String(result.err || '').trim() };
+      return { error: false, text: '已重启 systemd 用户单元 ' + LAN_UNIT_NAME };
+    }
+    if (lanCrontabHasOurLine(lanCrontabRead())) {
+      return { error: true, text: '受管 server 由 crontab @reboot 启动，无法在线重启；请手动重启。' };
+    }
+  }
+  return { error: true, text: '未检测到可管理的 server 自启配置，未执行重启。' };
+}
 function today() {
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');
   return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
 }
-function envAgentTrusted() {
-  const v = String(process.env.YOTTA_MEMORY_TRUST_ENV_AGENT || '').trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'yes';
-}
-function rawEnvAgent() {
-  return process.env.YOTTA_AGENT_ID || process.env.AGENT_ID || '';
-}
 let RUNTIME_AGENT = { id: '', agentKey: '' };
+const IDENTITY_CONTEXT = new AsyncLocalStorage();
 const RUNTIME_OWNER_KEYS = new Map();
 function setRuntimeAgent(id, agentKey) {
   RUNTIME_AGENT = { id: String(id || '').trim(), agentKey: String(agentKey || '').trim() };
   RUNTIME_OWNER_KEYS.clear();
 }
-function trustedEnvAgentKey() {
-  return envAgentTrusted() ? String(process.env.YOTTA_MEMORY_AGENT_KEY || '').trim() : '';
+function currentRuntimeIdentity() {
+  return IDENTITY_CONTEXT.getStore() || RUNTIME_AGENT;
 }
-function currentAgent() {
-  // Ambient environment identity is only trusted for host-managed MCP processes.
-  if (RUNTIME_AGENT.id) return RUNTIME_AGENT.id;
-  return envAgentTrusted() ? rawEnvAgent() : '';
+function runWithIdentity(identity, fn) {
+  const store = {
+    id: String((identity && identity.id) || '').trim(),
+    agentKey: String((identity && identity.agentKey) || '').trim(),
+  };
+  return IDENTITY_CONTEXT.run(store, fn);
+}
+function legacyIdentityEnvNames() {
+  return ['YOTTA_AGENT_ID', 'AGENT_ID', 'YOTTA_MEMORY_AGENT_KEY', 'YOTTA_MEMORY_TRUST_ENV_AGENT']
+    .filter(function (name) { return String(process.env[name] || '').trim() !== ''; });
+}
+function legacyIdentityEnvError() {
+  const names = legacyIdentityEnvNames();
+  if (!names.length) return '';
+  return [
+    '[YTM_IDENTITY_ENV_REMOVED] 检测到旧身份环境变量: ' + names.join(', '),
+    '0.16.0 已删除身份 env：HTTP / 远程 MCP 只用请求头 Authorization + X-Agent-Id + X-Agent-Key；stdio MCP 只用显式参数 --agent-id <id> + --agent-key-file <path>。',
+    'CLI 仍使用 --agent <id> + --agent-key/--agent-key-file。请从宿主 MCP 配置中移除身份 env 后重试。',
+  ].join('\n');
 }
 function resolveIdentity(opts) {
   opts = opts || {};
-  const explicit = String(opts.agent || opts.selfAgent || '').trim();
+  const explicitAgent = String(opts.agent || opts.selfAgent || '').trim();
+  const explicitAgentId = String(opts.agentId || '').trim();
+  if (explicitAgent && explicitAgentId && explicitAgent !== explicitAgentId) {
+    return { id: '', agentKey: '', source: 'conflict', error: '身份冲突：--agent ' + explicitAgent + ' 与 --agent-id ' + explicitAgentId + ' 不一致，请只保留一个身份参数。' };
+  }
+  const explicit = explicitAgent || explicitAgentId;
   let explicitKey = String(opts.agentKey || '').trim();
   const keyFile = String(opts.agentKeyFile || '').trim();
-  const env = String(rawEnvAgent() || '').trim();
-  const trusted = envAgentTrusted();
   if (keyFile) {
     let fileKey = '';
     try { fileKey = fs.readFileSync(path.resolve(keyFile), 'utf8').trim(); } catch (e) {
@@ -135,27 +628,7 @@ function resolveIdentity(opts) {
     return { id: '', agentKey: '', source: 'invalid', error: '非法 agent ID：只允许单段名称，禁止 /、\\、.. 和控制字符。' };
   }
   if (explicit) {
-    if (trusted && env) {
-      if (!isSafeAgentId(env)) {
-        return { id: '', agentKey: '', source: 'invalid-env', error: '受信任环境中的 agent ID 非法：只允许单段名称，禁止 /、\\、.. 和控制字符。' };
-      }
-      if (explicit !== env) {
-        return {
-          id: '',
-          agentKey: '',
-          source: 'conflict',
-          error: '身份冲突：显式身份 ' + explicit + ' 与受信任环境身份 ' + env + ' 不一致。请只保留一个明确身份。',
-        };
-      }
-      if (!explicitKey) explicitKey = trustedEnvAgentKey();
-    }
     return { id: explicit, agentKey: explicitKey, source: 'explicit', error: '' };
-  }
-  if (env && trusted) {
-    if (!isSafeAgentId(env)) {
-      return { id: '', agentKey: '', source: 'invalid-env', error: '受信任环境中的 agent ID 非法：只允许单段名称，禁止 /、\\、.. 和控制字符。' };
-    }
-    return { id: env, agentKey: explicitKey || trustedEnvAgentKey(), source: 'trusted-env', error: '' };
   }
   return { id: '', agentKey: '', source: 'none', error: '' };
 }
@@ -860,24 +1333,32 @@ function unwrapAgentBinding(root, owner, agentKey) {
   if (buf.slice(0, AGENT_MAGIC.length).toString('utf8') !== AGENT_MAGIC) throw new Error('agent binding 文件格式错误: ' + p);
   return aesDecryptBytes(agentKey, buf.slice(AGENT_MAGIC.length), Buffer.from('agent:' + owner, 'utf8'));
 }
-function getOwnerKeyFor(root, owner) {
+function getOwnerKeyFor(root, owner, identity) {
   if (!owner) return null;
   if (!isEncrypted(root)) return null;
-  if (!RUNTIME_AGENT.id || RUNTIME_AGENT.id !== owner || !RUNTIME_AGENT.agentKey) return null;
-  const agentKey = Buffer.from(RUNTIME_AGENT.agentKey, 'base64');
+  const current = identity || currentRuntimeIdentity();
+  if (!current.id || current.id !== owner || !current.agentKey) return null;
+  const agentKey = Buffer.from(current.agentKey, 'base64');
   return unwrapAgentBinding(root, owner, agentKey);
 }
 function validatePrivateIdentity(root, ident, owner) {
   if (!ident || !ident.id) return '私密操作必须先声明显式身份。';
   if (!isSafeAgentId(owner || ident.id)) return '非法 owner ID：只允许单段名称，禁止 /、\\、.. 和控制字符。';
   if (!isEncrypted(root)) return '';
-  const agentKey = ident.agentKey || (RUNTIME_AGENT.id === ident.id ? RUNTIME_AGENT.agentKey : '');
+  const current = currentRuntimeIdentity();
+  const agentKey = ident.agentKey || (current.id === ident.id ? current.agentKey : '');
   if (!agentKey) {
-    return '记忆库已加密，但缺少 agent_key。请使用 --agent-key <key>，或在 MCP 配置中设置 YOTTA_MEMORY_AGENT_KEY + YOTTA_MEMORY_TRUST_ENV_AGENT=1。若该 agent 尚未绑定，请执行 yotta-memory key bind ' + (owner || ident.id) + '。';
+    return '记忆库已加密，但缺少 agent_key。CLI 请使用 --agent-key <key> 或 --agent-key-file <path>；stdio MCP 请使用 --agent-id <id> + --agent-key-file <path>；HTTP MCP 请发送 X-Agent-Key 请求头。若该 agent 尚未绑定，请执行 yotta-memory key bind ' + (owner || ident.id) + '。';
   }
-  setRuntimeAgent(ident.id, agentKey);
+  const context = IDENTITY_CONTEXT.getStore();
+  if (context) {
+    context.id = ident.id;
+    context.agentKey = agentKey;
+  } else {
+    setRuntimeAgent(ident.id, agentKey);
+  }
   try {
-    if (!getOwnerKeyFor(root, owner || ident.id)) {
+    if (!getOwnerKeyFor(root, owner || ident.id, { id: ident.id, agentKey: agentKey })) {
       return 'agent_key 校验失败：未找到 ' + (owner || ident.id) + ' 的 agent binding（可能已吊销）。请由用户重新授权，或由用户执行 yotta-memory key bind ' + (owner || ident.id) + '。';
     }
   } catch (e) {
@@ -1359,7 +1840,7 @@ function hasGrant(userAgent, ownerAgent) {
   return false;
 }
 // 三态读取判定：'read' | 'denied'
-// selfAgent 为可信身份（env 声明 / 调用方上下文）；--agent 仅供授权与展示，不得授予跨智能体私密读取。
+// selfAgent 为调用方显式声明的可信身份（CLI 参数 / stdio 参数 / HTTP 请求头）；--owner 仅供授权与展示，不得授予跨智能体私密读取。
 function classifyRead(entry, agent, ownerFilter, unsafe, selfAgent) {
   if (entry.scope === 'public') return 'read';
   const owner = entry.owner || '';
@@ -1551,7 +2032,7 @@ function backupWindowsTaskXml(opts) {
   opts = opts || {};
   const time = backupTimeParts(opts.time || '03:30');
   const nodePath = opts.nodePath || process.execPath;
-  const scriptPath = opts.scriptPath || __filename;
+  const scriptPath = opts.scriptPath || runtimeManagedScript();
   const userId = opts.userId || '';
   const principal = userId
     ? '<Principal id="Author"><UserId>' + xmlEscape(userId) + '</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal>'
@@ -1584,7 +2065,7 @@ function backupWindowsTaskXml(opts) {
 function backupSystemdServiceContent(opts) {
   opts = opts || {};
   const nodePath = opts.nodePath || process.execPath;
-  const scriptPath = opts.scriptPath || __filename;
+  const scriptPath = opts.scriptPath || runtimeManagedScript();
   return [
     '[Unit]',
     'Description=Yotta Memory daily backup',
@@ -1617,7 +2098,7 @@ function backupCronLine(opts) {
   opts = opts || {};
   const time = backupTimeParts(opts.time || '03:30');
   const nodePath = opts.nodePath || process.execPath;
-  const scriptPath = opts.scriptPath || __filename;
+  const scriptPath = opts.scriptPath || runtimeManagedScript();
   const logPath = opts.logPath || '';
   const redirect = logPath ? ' >> ' + shQuote(logPath) + ' 2>&1' : '';
   return time.minute + ' ' + time.hour + ' * * * ' + shQuote(nodePath) + ' ' + shQuote(scriptPath) + ' backup ensure-daily' + redirect + ' ' + BACKUP_CRON_MARKER;
@@ -1626,7 +2107,7 @@ function backupLaunchdPlist(opts) {
   opts = opts || {};
   const time = backupTimeParts(opts.time || '03:30');
   const nodePath = opts.nodePath || process.execPath;
-  const scriptPath = opts.scriptPath || __filename;
+  const scriptPath = opts.scriptPath || runtimeManagedScript();
   const logPath = opts.logPath || '';
   const lines = [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -1677,7 +2158,7 @@ function backupScheduleEnableCore(opts) {
   const time = opts.time || '03:30';
   try { backupTimeParts(time); } catch (error) { return { error: true, text: error.message }; }
   const nodePath = opts.nodePath || process.execPath;
-  const scriptPath = opts.scriptPath || __filename;
+  const scriptPath = opts.scriptPath || runtimeManagedScript();
   try {
     if (platform === 'win32') {
       const userId = opts.userId || (process.env.USERDOMAIN && process.env.USERNAME ? process.env.USERDOMAIN + '\\' + process.env.USERNAME : '');
@@ -1796,7 +2277,7 @@ function backupScheduleStatusCore(opts) {
   return { error: false, registered: false, scheduler: '', text: '当前平台不支持自动备份调度: ' + platform };
 }
 function backupFallbackCommand() {
-  return { command: process.execPath, args: [__filename, 'backup', 'ensure-daily'] };
+  return { command: process.execPath, args: [runtimeManagedScript(), 'backup', 'ensure-daily'] };
 }
 function startBackupFallback() {
   const cfg = loadConfig();
@@ -2077,6 +2558,348 @@ function backupHealthCore(opts) {
   }
   return { level: 'none', needsSetup: false, text: '' };
 }
+// ---- v0.16.0 M3: runtime drift diagnosis ----
+function runtimePathList(value) {
+  const pattern = path.delimiter === ':' ? /[;:\n]/ : /[;\n]/;
+  return String(value || '').split(pattern).map(function (item) { return item.trim(); }).filter(Boolean);
+}
+function runtimeVersionFromDir(dir) {
+  let current = path.resolve(String(dir || ''));
+  for (let i = 0; i < 8; i++) {
+    const pkgPath = path.join(current, 'package.json');
+    if (fs.existsSync(pkgPath)) {
+      try {
+        const version = String(JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version || '').trim();
+        if (version) return version;
+      } catch (e) {}
+    }
+    const skillPath = path.join(current, 'SKILL.md');
+    if (fs.existsSync(skillPath)) {
+      try {
+        const text = fs.readFileSync(skillPath, 'utf8');
+        const match = text.match(/^---\s*\n([\s\S]*?)\n---/);
+        if (match) {
+          const versionLine = match[1].split(/\r?\n/).find(function (line) { return /^version\s*:/.test(line); });
+          if (versionLine) {
+            const version = versionLine.slice(versionLine.indexOf(':') + 1).trim().replace(/^["']|["']$/g, '');
+            if (version) return version;
+          }
+        }
+      } catch (e) {}
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return '';
+}
+function runtimeVersionFromPath(target) {
+  const value = String(target || '').trim();
+  if (!value) return '';
+  const normalized = value.replace(/\\/g, '/');
+  const versionMatch = normalized.match(/\/versions\/([^/]+)\/bin\/yotta-memory\.js$/i);
+  if (versionMatch) return versionMatch[1];
+  const abs = path.resolve(value);
+  if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) return runtimeVersionFromDir(abs);
+  const base = path.basename(abs).toLowerCase();
+  const dir = path.dirname(abs);
+  return runtimeVersionFromDir(base === 'yotta-memory.js' ? path.dirname(dir) : dir);
+}
+function runtimeExtractLauncherPaths(text) {
+  const found = new Set();
+  const add = function (value) {
+    const raw = String(value || '').trim().replace(/^['"]|['"]$/g, '');
+    if (!raw) return;
+    const parts = splitCommandArgv(raw);
+    for (const part of parts) {
+      const token = part.replace(/^['"]|['"]$/g, '');
+      if (/yotta-memory\.js$/i.test(token.replace(/[;,]$/, ''))) found.add(token.replace(/[;,]$/, ''));
+    }
+  };
+  const parsed = [];
+  try {
+    const value = JSON.parse(String(text || ''));
+    const walk = function (node) {
+      if (typeof node === 'string') parsed.push(node);
+      else if (Array.isArray(node)) node.forEach(walk);
+      else if (node && typeof node === 'object') Object.keys(node).forEach(function (key) { walk(node[key]); });
+    };
+    walk(value);
+  } catch (e) {}
+  for (const value of parsed) if (/yotta-memory\.js/i.test(value)) add(value);
+  const raw = String(text || '').replace(/\\\\/g, '\\');
+  const patterns = [
+    /[A-Za-z]:[\\/][^"'\r\n|;]+?yotta-memory\.js/gi,
+    /(?:\.{0,2}[\\/])?[^"'\s|;]+?yotta-memory\.js/gi,
+  ];
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(raw)) !== null) add(match[0]);
+  }
+  return Array.from(found);
+}
+function runtimeConfigIdentityMode(text) {
+  const raw = String(text || '');
+  if (/YOTTA_AGENT_ID|YOTTA_MEMORY_AGENT_KEY|YOTTA_MEMORY_TRUST_ENV_AGENT/.test(raw)) return 'legacy-env';
+  if (/--agent-id/.test(raw) && /--agent-key-file/.test(raw)) return 'stdio-args';
+  if (/X-Agent-Id|Authorization/i.test(raw)) return 'headers';
+  return 'unknown';
+}
+function runtimeDiscoverProcesses() {
+  try {
+    if (process.platform === 'win32') {
+      const script = "$p=Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*yotta-memory*' }; if ($p) { $p | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress }";
+      const result = child_process.spawnSync('powershell.exe', ['-NoProfile', '-Command', script], {
+        encoding: 'utf8',
+        timeout: 15000,
+        windowsHide: true,
+      });
+      if (result.status !== 0 || !String(result.stdout || '').trim()) return [];
+      const parsed = JSON.parse(String(result.stdout).trim());
+      const rows = Array.isArray(parsed) ? parsed : [parsed];
+      return rows.map(function (row) {
+        return { pid: row.ProcessId, commandLine: row.CommandLine || '' };
+      });
+    }
+    const result = child_process.spawnSync('ps', ['-eo', 'pid=,args='], { encoding: 'utf8', timeout: 10000 });
+    if (result.status !== 0) return [];
+    return String(result.stdout || '').split(/\r?\n/).filter(Boolean).map(function (line) {
+      const match = line.trim().match(/^(\d+)\s+(.*)$/);
+      return match ? { pid: parseInt(match[1], 10), commandLine: match[2] } : null;
+    }).filter(Boolean);
+  } catch (e) {
+    return [];
+  }
+}
+function runtimeDiscoverSkillDirs() {
+  const explicit = runtimePathList(process.env.YOTTA_MEMORY_SKILL_DIRS);
+  if (explicit.length) return explicit;
+  const candidates = [];
+  const add = function (base) {
+    if (!base) return;
+    candidates.push(path.join(base, 'skills', 'yotta-memory'));
+    candidates.push(path.join(base, 'yotta-memory'));
+  };
+  add(process.env.CODEX_HOME);
+  if (process.env.XDG_CONFIG_HOME) candidates.push(path.join(process.env.XDG_CONFIG_HOME, 'opencode', 'skills', 'yotta-memory'));
+  add(process.env.HERMES_HOME);
+  add(path.join(os.homedir(), '.codex'));
+  candidates.push(path.join(os.homedir(), '.config', 'opencode', 'skills', 'yotta-memory'));
+  return Array.from(new Set(candidates)).filter(function (dir) { return fs.existsSync(dir); });
+}
+function runtimeDoctorCore(opts) {
+  opts = opts || {};
+  const drifts = [];
+  const warnings = [];
+  const mcpConfigPaths = opts.mcpConfigPaths !== undefined
+    ? opts.mcpConfigPaths
+    : runtimePathList(process.env.YOTTA_MEMORY_MCP_CONFIGS);
+  const skillDirs = opts.skillDirs !== undefined ? opts.skillDirs : runtimeDiscoverSkillDirs();
+  const processes = opts.processes !== undefined ? opts.processes : runtimeDiscoverProcesses();
+  const manifest = readRuntimeManifest();
+  const currentDir = runtimeCurrentDir();
+  const currentBin = runtimeCurrentBin();
+  const manifestVersion = manifest && manifest.current ? String(manifest.current) : '';
+  const installedCurrentVersion = fs.existsSync(path.join(currentDir, 'package.json'))
+    ? runtimeVersionFromDir(currentDir)
+    : '';
+
+  const checks = {
+    cli: { path: runtimeExecutionPath(), version: VERSION },
+    current: {
+      path: currentDir,
+      version: manifestVersion || installedCurrentVersion || '',
+      installedVersion: installedCurrentVersion,
+      manifestVersion: manifestVersion,
+    },
+    runtimeRoot: runtimeRoot(),
+    mcpConfigs: [],
+    runningServers: [],
+    skillCopies: [],
+    identityModes: [],
+    drifts: drifts,
+  };
+
+  if (!manifest || !manifest.current) {
+    drifts.push({
+      kind: 'current-runtime',
+      source: runtimeManifestPath(),
+      actual: 'missing',
+      expected: VERSION,
+      fix: 'yotta-memory runtime install --from-current',
+      blocking: true,
+    });
+  } else {
+    const versionDir = runtimeVersionDir(manifest.current);
+    if (!fs.existsSync(versionDir)) {
+      drifts.push({
+        kind: 'current-runtime',
+        source: runtimeManifestPath(),
+        actual: manifest.current,
+        expected: VERSION,
+        fix: 'yotta-memory runtime install --from-current && yotta-memory runtime use ' + VERSION + ' --restart',
+        blocking: true,
+      });
+    } else if (manifest.current !== VERSION) {
+      drifts.push({
+        kind: 'current-runtime',
+        source: runtimeManifestPath(),
+        actual: manifest.current,
+        expected: VERSION,
+        fix: 'yotta-memory runtime install --from-current && yotta-memory runtime use ' + VERSION + ' --restart',
+        blocking: true,
+      });
+    }
+    if (fs.existsSync(versionDir)) {
+      if (!fs.existsSync(currentBin)) {
+        drifts.push({
+          kind: 'current-runtime',
+          source: currentDir,
+          actual: 'launcher-missing',
+          expected: VERSION,
+          fix: 'yotta-memory runtime use ' + manifest.current + ' --force',
+          blocking: true,
+        });
+      } else {
+        try {
+          const real = fs.realpathSync(currentDir);
+          if (path.resolve(real) !== path.resolve(versionDir)) {
+            drifts.push({
+              kind: 'current-runtime',
+              source: currentDir,
+              actual: 'pointer-mismatch',
+              expected: manifest.current,
+              fix: 'yotta-memory runtime use ' + manifest.current + ' --restart',
+              blocking: true,
+            });
+          }
+        } catch (e) {
+          drifts.push({
+            kind: 'current-runtime',
+            source: currentDir,
+            actual: 'pointer-unreadable',
+            expected: manifest.current,
+            fix: 'yotta-memory runtime use ' + manifest.current + ' --restart',
+            blocking: true,
+          });
+        }
+      }
+    }
+  }
+
+  const legacyEnv = legacyIdentityEnvNames();
+  if (legacyEnv.length) {
+    drifts.push({
+      kind: 'identity-mode',
+      source: 'process-env',
+      actual: 'legacy-env',
+      expected: 'headers|stdio-args',
+      fix: '移除 ' + legacyEnv.join(', ') + '，HTTP 改用请求头，stdio 改用 --agent-id + --agent-key-file',
+      blocking: true,
+    });
+  }
+
+  for (const configPath of mcpConfigPaths) {
+    const abs = path.resolve(String(configPath));
+    let text = '';
+    try {
+      text = fs.readFileSync(abs, 'utf8');
+    } catch (e) {
+      warnings.push('MCP 配置无法读取: ' + abs);
+      checks.mcpConfigs.push({ path: abs, readable: false, version: 'unknown', identityMode: 'unknown' });
+      continue;
+    }
+    const launchers = runtimeExtractLauncherPaths(text);
+    const identityMode = runtimeConfigIdentityMode(text);
+    const version = launchers.length ? (runtimeVersionFromPath(launchers[0]) || 'unknown') : 'unknown';
+    checks.mcpConfigs.push({ path: abs, readable: true, launcher: launchers[0] || '', version: version, identityMode: identityMode });
+    checks.identityModes.push({ source: abs, mode: identityMode });
+    if (identityMode === 'legacy-env') {
+      drifts.push({
+        kind: 'identity-mode',
+        source: abs,
+        actual: 'legacy-env',
+        expected: 'headers|stdio-args',
+        fix: '从 MCP 配置移除身份 env，HTTP 改用请求头，stdio 改用 --agent-id + --agent-key-file',
+        blocking: true,
+      });
+    }
+    if (version !== 'unknown' && version !== VERSION) {
+      drifts.push({
+        kind: 'mcp-config',
+        source: abs,
+        actual: version,
+        expected: VERSION,
+        fix: '把 MCP 配置中的运行时路径改为 ' + runtimeCurrentBin() + ' 后重启该 MCP',
+        blocking: true,
+      });
+    }
+  }
+
+  for (const processInfo of processes || []) {
+    const row = typeof processInfo === 'string' ? { pid: '', commandLine: processInfo } : (processInfo || {});
+    const commandLine = String(row.commandLine || '');
+    if (!commandLine || commandLine.indexOf('yotta-memory') === -1 || commandLine.indexOf('serve') === -1) continue;
+    const launchers = runtimeExtractLauncherPaths(commandLine);
+    const launcher = launchers[0] || '';
+    const version = launcher ? (runtimeVersionFromPath(launcher) || 'unknown') : 'unknown';
+    checks.runningServers.push({ pid: row.pid || '', launcher: launcher, version: version });
+    if (version !== 'unknown' && version !== VERSION) {
+      drifts.push({
+        kind: 'running-server',
+        source: 'pid=' + String(row.pid || 'unknown'),
+        actual: version,
+        expected: VERSION,
+        fix: 'yotta-memory runtime use ' + VERSION + ' --restart 或重启对应 MCP 客户端',
+        blocking: false,
+      });
+    }
+  }
+
+  for (const skillDir of skillDirs) {
+    const abs = path.resolve(String(skillDir));
+    if (!fs.existsSync(path.join(abs, 'SKILL.md'))) continue;
+    const version = runtimeVersionFromDir(abs) || 'unknown';
+    checks.skillCopies.push({ path: abs, version: version });
+    if (version !== 'unknown' && version !== VERSION) {
+      drifts.push({
+        kind: 'skill-copy',
+        source: abs,
+        actual: version,
+        expected: VERSION,
+        fix: '用官方安装器更新该 yotta-memory 技能副本',
+        blocking: false,
+      });
+    }
+  }
+
+  const lines = [
+    '## 运行时一致性',
+    '- CLI: ' + VERSION + ' (' + runtimeExecutionPath() + ')',
+    '- current: ' + (checks.current.version || '(missing)') + ' (' + currentDir + ')',
+    '- runtime.json: ' + runtimeManifestPath(),
+  ];
+  if (checks.mcpConfigs.length) {
+    for (const item of checks.mcpConfigs) lines.push('- MCP 配置: ' + item.path + ' -> ' + item.version + ' / ' + item.identityMode);
+  } else lines.push('- MCP 配置: (未提供或未发现)');
+  if (checks.runningServers.length) {
+    for (const item of checks.runningServers) lines.push('- 运行中 server: pid=' + item.pid + ' -> ' + item.version);
+  } else lines.push('- 运行中 server: (未发现)');
+  if (checks.skillCopies.length) {
+    for (const item of checks.skillCopies) lines.push('- 技能副本: ' + item.path + ' -> ' + item.version);
+  } else lines.push('- 技能副本: (未提供或未发现)');
+  if (!drifts.length) lines.push('- 漂移: 无');
+  for (const drift of drifts) {
+    lines.push('- [漂移] ' + drift.kind + ': actual=' + drift.actual + ' expected=' + drift.expected + ' fix=' + drift.fix + ' blocking=' + (drift.blocking ? 'yes' : 'no'));
+  }
+  return {
+    ok: !drifts.some(function (drift) { return drift.blocking; }),
+    checks: checks,
+    drifts: drifts,
+    warnings: warnings,
+    text: lines.join('\n'),
+  };
+}
 // 开工可靠性检查：只读检查根目录、密钥库、索引、身份登记与最近备份。
 function doctorCore(opts) {
   opts = opts || {};
@@ -2175,6 +2998,18 @@ function doctorCore(opts) {
     if (cfg.backup_scheduler_error) warnings.push('每日备份调度异常: ' + cfg.backup_scheduler_error);
   }
 
+  let runtimeReport = null;
+  if (opts.runtime) {
+    runtimeReport = runtimeDoctorCore(opts);
+    checks.runtime = runtimeReport.checks;
+    for (const drift of runtimeReport.drifts) {
+      const message = '运行时漂移 [' + drift.kind + ']: actual=' + drift.actual + ' expected=' + drift.expected + '；修复: ' + drift.fix + '；阻断: ' + (drift.blocking ? '是' : '否');
+      if (drift.blocking) critical.push(message);
+      else warnings.push(message);
+    }
+    for (const warning of runtimeReport.warnings || []) warnings.push(warning);
+  }
+
   const level = critical.length ? 'critical' : (warnings.length ? 'warning' : 'ok');
   const lines = [
     '# yotta-memory doctor（开工可靠性检查）',
@@ -2187,6 +3022,10 @@ function doctorCore(opts) {
   for (const message of critical) lines.push('- [严重] ' + message);
   for (const message of warnings) lines.push('- [警告] ' + message);
   if (!critical.length && !warnings.length) lines.push('- 检查项: 全部通过');
+  if (runtimeReport) {
+    lines.push('');
+    lines.push(runtimeReport.text);
+  }
   if (level === 'critical') {
     lines.push('');
     lines.push('- 破坏性写入已锁定：先运行 yotta-memory doctor 修复严重问题。');
@@ -2549,7 +3388,7 @@ function rememberCore(type, subject, statement, opts) {
     if (keyError) return { error: true, text: keyError };
   }
   if (scope === 'private' && !owner) {
-    return { error: true, text: '私密记忆必须显式声明归属智能体：请传 --agent <id>；MCP 场景需由宿主在配置中设置 YOTTA_AGENT_ID=<id> + YOTTA_MEMORY_TRUST_ENV_AGENT=1。公共记忆(FACT)不受影响。' };
+    return { error: true, text: '私密记忆必须显式声明归属智能体：CLI 传 --agent <id>；stdio MCP 传 --agent-id <id> + --agent-key-file <path>；HTTP MCP 发送 X-Agent-Id + X-Agent-Key。公共记忆(FACT)不受影响。' };
   }
   if (scope === 'private' && owner && selfAgent && owner !== selfAgent && !opts.unsafe) {
     return { error: true, text: '拒绝: 当前显式身份 ' + selfAgent + ' 不能写入其它智能体 ' + owner + ' 的私密区。请传正确的 --agent <id>，或加 --unsafe（用户显式授权）。' };
@@ -2671,7 +3510,7 @@ function recallCore(query, opts) {
     return {
       error: true,
       exitCode: 3,
-      text: '显式跨智能体读取必须先声明身份：请传 --agent <id>；MCP 场景需设置 YOTTA_AGENT_ID=<id> + YOTTA_MEMORY_TRUST_ENV_AGENT=1。',
+      text: '显式跨智能体读取必须先声明身份：CLI 传 --agent <id>；stdio MCP 传 --agent-id <id> + --agent-key-file <path>；HTTP MCP 发送 X-Agent-Id + X-Agent-Key。',
     };
   }
   if (selfAgent && !allSafe) {
@@ -2857,7 +3696,7 @@ function forgetCore(fileRef, opts) {
   if (seg[0] === 'private') {
     const owner = seg[1] || '';
     if (!opts.unsafe && (owner && (selfAgent ? owner !== selfAgent : true))) {
-      return { error: true, text: '拒绝: 不能删除其它智能体 ' + owner + ' 的私密记忆（当前身份 ' + (selfAgent || '未声明') + '）。请用 YOTTA_AGENT_ID 声明自己的身份，或加 --unsafe（用户显式授权）。' };
+      return { error: true, text: '拒绝: 不能删除其它智能体 ' + owner + ' 的私密记忆（当前身份 ' + (selfAgent || '未声明') + '）。请用 --agent / --agent-id 声明自己的身份，或加 --unsafe（用户显式授权）。' };
     }
   }
   const trashFile = path.join(
@@ -2954,7 +3793,7 @@ function checkOwnerWritable(targetRoot, targetRel, selfAgent, unsafe) {
   if (seg[0] === PRIVATE_DIR) {
     const owner = seg[1] || '';
     if (!unsafe && (owner && (selfAgent ? owner !== selfAgent : true))) {
-      return '拒绝: 不能操作其它智能体 ' + owner + ' 的私密记忆（当前身份 ' + (selfAgent || '未声明') + '）。请用 YOTTA_AGENT_ID 声明自己的身份，或加 --unsafe（用户显式授权）。';
+      return '拒绝: 不能操作其它智能体 ' + owner + ' 的私密记忆（当前身份 ' + (selfAgent || '未声明') + '）。请用 --agent / --agent-id 声明自己的身份，或加 --unsafe（用户显式授权）。';
     }
   }
   return null;
@@ -4010,7 +4849,15 @@ function cmdBackupEnsureDaily(opts) {
 }
 function cmdBackupSchedule(action, opts) {
   let r;
-  if (action === 'enable') r = backupScheduleEnableCore(opts);
+  if (action === 'enable') {
+    const runtime = runtimeEnsureForManagedTask();
+    if (runtime.error) {
+      console.error('runtime 稳定入口未就绪，拒绝注册备份任务: ' + runtime.text);
+      process.exit(1);
+    }
+    opts = Object.assign({}, opts, { scriptPath: runtimeManagedScript() });
+    r = backupScheduleEnableCore(opts);
+  }
   else if (action === 'disable') r = backupScheduleDisableCore(opts);
   else if (action === 'status') r = backupScheduleStatusCore(opts);
   else {
@@ -4322,8 +5169,8 @@ function cmdWhoami(opts) {
   }
   const id = ident.id;
   if (!id) {
-    console.log('当前未声明可信智能体身份（未传 --agent，且没有受信任的 MCP 环境身份）。');
-    console.log('CLI：请显式传 --agent <唯一ID>。MCP：在客户端配置中同时设置 YOTTA_AGENT_ID=<唯一ID> 与 YOTTA_MEMORY_TRUST_ENV_AGENT=1。');
+    console.log('当前未声明显式智能体身份（身份不再从环境变量读取）。');
+    console.log('CLI：请传 --agent <唯一ID>。stdio MCP：使用 --agent-id <唯一ID> + --agent-key-file <path>。HTTP MCP：发送 X-Agent-Id + X-Agent-Key。');
     console.log('远端：token + X-Agent-Id + X-Agent-Key（token new --agent <id>；agent_key 由 view 授权生成）。');
     return;
   }
@@ -4380,14 +5227,14 @@ function profileCore(opts) {
     return {
       error: true,
       exitCode: 3,
-      text: '生成私密画像必须先声明身份：请传 --agent <id>；MCP 场景需设置 YOTTA_AGENT_ID=<id> + YOTTA_MEMORY_TRUST_ENV_AGENT=1。',
+      text: '生成私密画像必须先声明身份：CLI 传 --agent <id>；stdio MCP 传 --agent-id <id> + --agent-key-file <path>；HTTP MCP 发送 X-Agent-Id + X-Agent-Key。',
     };
   }
   const selfAgent = ident.id;
   const owner = opts.owner || selfAgent;
   const keyError = validatePrivateIdentity(root, ident, owner);
   if (keyError) return { error: true, exitCode: 3, text: keyError };
-  if (!owner) return { error: true, exitCode: 2, text: '请先声明身份（YOTTA_AGENT_ID / AGENT_ID）或传 --owner <id>，再生成画像。' };
+  if (!owner) return { error: true, exitCode: 2, text: '请先声明身份（--agent / --agent-id）或传 --owner <id>，再生成画像。' };
   if (selfAgent && owner !== selfAgent && owner !== 'user' && !opts.unsafe && !hasGrant(selfAgent, owner)) {
     return { error: true, exitCode: 3, text: '拒绝: 不能生成其它智能体 ' + owner + ' 的画像（private/' + owner + '/ 为私密区）。如需读取请 --owner user 或 --unsafe（用户显式授权）。' };
   }
@@ -4461,7 +5308,7 @@ function contextCore(opts) {
     return {
       error: true,
       exitCode: 3,
-      text: '开工上下文包含私密画像 / 边界 / 承诺，必须先声明身份：请传 --agent <id>；MCP 场景需设置 YOTTA_AGENT_ID=<id> + YOTTA_MEMORY_TRUST_ENV_AGENT=1。',
+      text: '开工上下文包含私密画像 / 边界 / 承诺，必须先声明身份：CLI 传 --agent <id>；stdio MCP 传 --agent-id <id> + --agent-key-file <path>；HTTP MCP 发送 X-Agent-Id + X-Agent-Key。',
     };
   }
   const selfAgent = ident.id;
@@ -4501,7 +5348,7 @@ function contextCore(opts) {
   lines.push('## 1. 身份');
   lines.push('');
   if (!owner) {
-    lines.push('- 未声明智能体身份（无 YOTTA_AGENT_ID / --owner）。私密记忆与画像不可用；请先 whoami / iam。');
+    lines.push('- 未声明智能体身份（无 --agent / --agent-id / X-Agent-Id）。私密记忆与画像不可用；请先 whoami / iam。');
   } else {
     lines.push('- agent_id: ' + owner);
     const kv = selfProfileKv(root, owner);
@@ -4718,7 +5565,7 @@ function mcpTools(profile) {
     { name: 'reindex', description: '重建索引（手动改 .md 后校正；扫描 facts/prefs/bounds/commits 四目录）', inputSchema: { type: 'object', properties: {} } },
     { name: 'export', description: '导出全部记忆到记忆库内的 JSON 文件。out 可选（默认 <记忆库>/yottamemory-export-<日期>.json；仅限记忆库内路径）', inputSchema: { type: 'object', properties: { out: { type: 'string' } } } },
     { name: 'import', description: '从记忆库内的 JSON 文件导入记忆。src 为文件路径（相对记忆库目录，或记忆库内绝对路径；仅限记忆库内）', inputSchema: { type: 'object', properties: { src: { type: 'string' } }, required: ['src'] } },
-    { name: 'agent_info', description: '查看当前智能体身份与登记状态（远端读经 token 校验的 X-Agent-Id；本机读 YOTTA_AGENT_ID）。开工先确认「我是谁」，禁止从记忆里抄别人的 ID', inputSchema: { type: 'object', properties: {} } },
+    { name: 'agent_info', description: '查看当前智能体身份与登记状态（HTTP 读经 token 校验的 X-Agent-Id；stdio 读 --agent-id 显式参数）。开工先确认「我是谁」，禁止从记忆里抄别人的 ID', inputSchema: { type: 'object', properties: {} } },
     { name: 'profile', description: '生成当前智能体的用户画像（只读聚合 private/<owner>/ 下 PREF/BOUND/COMMIT 原文，零推断，写入 private/<owner>/profile.md）。owner 默认当前智能体', inputSchema: { type: 'object', properties: { owner: { type: 'string' } } } },
     { name: 'feedback', description: '显式使用反馈（自我学习）：useful/useless 调整记忆 weight/confidence/feedback_net。file 为记忆文件路径或文件名', inputSchema: { type: 'object', properties: { file: { type: 'string' }, useful: { type: 'boolean' }, useless: { type: 'boolean' }, reason: { type: 'string' } }, required: ['file'] } },
     { name: 'maintain', description: '记忆自组织（自我进化）：规则层归档/遗忘/去重预览。默认 dry-run；apply 才执行，purge 才真删', inputSchema: { type: 'object', properties: { apply: { type: 'boolean' }, purge: { type: 'boolean' }, dedup: { type: 'boolean' }, threshold: { type: 'number' }, age: { type: 'number' } } } },
@@ -4731,6 +5578,14 @@ function mcpTools(profile) {
     .filter(Boolean);
 }
 function callTool(name, args, ctx) {
+  return runWithIdentity({
+    id: ctx && ctx.agent,
+    agentKey: ctx && ctx.agentKey,
+  }, function () {
+    return callToolInner(name, args, ctx);
+  });
+}
+function callToolInner(name, args, ctx) {
   const agent = (ctx && ctx.agent) || '';
   const toolProfile = normalizeMcpToolProfile(ctx && ctx.toolProfile);
   if (toolProfile === 'core' && MCP_CORE_TOOL_NAMES.indexOf(name) === -1) {
@@ -4805,7 +5660,7 @@ function callTool(name, args, ctx) {
     if (name === 'agent_info') {
       const root = userRoot();
       const id = agent || '';
-      if (!id) return { text: '当前未声明智能体身份（无 X-Agent-Id / YOTTA_AGENT_ID）。本机请在 MCP 配置 env 设 YOTTA_AGENT_ID=<唯一ID> 并 iam 登记。', error: false };
+      if (!id) return { text: '当前未声明智能体身份（无 X-Agent-Id / --agent-id）。stdio 请使用 --agent-id <唯一ID> + --agent-key-file <path>；HTTP 请发送 X-Agent-Id + X-Agent-Key。', error: false };
       const agents = loadAgents(root).agents || {};
       const tokens = loadTokens(root).tokens || {};
       let reg = '未登记';
@@ -4852,18 +5707,32 @@ function reqVersion(params) {
   const meta = (params && params._meta) || {};
   return meta['io.modelcontextprotocol/protocolVersion'] || null;
 }
-function modernOk(payload, ttl) {
+function mcpIdentityMode(ctx) {
+  const mode = String((ctx && ctx.identityMode) || '').trim().toLowerCase();
+  if (mode === 'headers' || mode === 'stdio-args') return mode;
+  if (ctx && ctx.agent) return 'stdio-args';
+  return 'unknown';
+}
+function mcpServerInfo(ctx) {
+  return {
+    name: 'yotta-memory',
+    version: VERSION,
+    runtimePath: runtimeExecutionPath(),
+    identityMode: mcpIdentityMode(ctx),
+    toolProfile: normalizeMcpToolProfile(ctx && ctx.toolProfile),
+  };
+}
+function modernOk(payload, ttl, ctx) {
   const out = { resultType: 'complete' };
   Object.assign(out, payload);
   if (ttl) { out.ttlMs = ttl[0]; out.cacheScope = ttl[1]; }
-  out._meta = { 'io.modelcontextprotocol/serverInfo': { name: 'yotta-memory', version: VERSION } };
+  out._meta = { 'io.modelcontextprotocol/serverInfo': mcpServerInfo(ctx) };
   return out;
 }
 function unsupportedVersion(id, pv) {
   return { jsonrpc: '2.0', id: id, error: { code: -32022, message: 'Unsupported protocol version', data: { supported: [MCP_PROTOCOL_MODERN], requested: pv } } };
 }
 function handleMessage(msg, ctx) {
-  setRuntimeAgent(ctx && ctx.agent, ctx && ctx.agentKey);
   if (!msg || msg.jsonrpc !== '2.0') return { jsonrpc: '2.0', id: msg && msg.id, error: { code: -32600, message: 'invalid request' } };
   const id = msg.id;
   if (id === undefined || id === null) return null;
@@ -4879,12 +5748,12 @@ function handleMessage(msg, ctx) {
         supportedVersions: [MCP_PROTOCOL_MODERN],
         capabilities: { tools: {} },
         instructions: '元忆 MCP（基于 MCP 最新协议 2026-07-28，向后兼容 2025-11-25 及更早握手）：当前工具分组 ' + toolProfile + '；文件式智能体记忆 remember/recall/search/context/forget/archive/maintain 等读写检索与维护；私密按 owner 物理隔离，数据不出本机。'
-      }, [3600000, 'public']) };
+      }, [3600000, 'public'], ctx) };
     }
-    if (method === 'tools/list') return { jsonrpc: '2.0', id: id, result: modernOk({ tools: mcpTools(toolProfile) }, [300000, 'public']) };
+    if (method === 'tools/list') return { jsonrpc: '2.0', id: id, result: modernOk({ tools: mcpTools(toolProfile) }, [300000, 'public'], ctx) };
     if (method === 'tools/call') {
       const out = callTool(params.name || '', params.arguments || {}, ctx);
-      return { jsonrpc: '2.0', id: id, result: modernOk({ content: [{ type: 'text', text: out.text }], isError: !!out.error }) };
+      return { jsonrpc: '2.0', id: id, result: modernOk({ content: [{ type: 'text', text: out.text }], isError: !!out.error }, null, ctx) };
     }
     if (method === 'initialize') {
       return { jsonrpc: '2.0', id: id, error: { code: -32601, message: "initialize removed in MCP 2026-07-28; use server/discover. supported: ['2026-07-28']" } };
@@ -4893,7 +5762,7 @@ function handleMessage(msg, ctx) {
   }
   // ---- legacy（<=2025-11-25，initialize 握手；响应保持旧形状）----
   if (method === 'initialize') {
-    return { jsonrpc: '2.0', id: id, result: { protocolVersion: MCP_PROTOCOL_LEGACY, capabilities: { tools: {} }, serverInfo: { name: 'yotta-memory', version: VERSION } } };
+    return { jsonrpc: '2.0', id: id, result: { protocolVersion: MCP_PROTOCOL_LEGACY, capabilities: { tools: {} }, serverInfo: mcpServerInfo(ctx) } };
   }
   if (method === 'ping') return { jsonrpc: '2.0', id: id, result: {} };
   if (method === 'tools/list') return { jsonrpc: '2.0', id: id, result: { tools: mcpTools(ctx && ctx.toolProfile) } };
@@ -4905,23 +5774,33 @@ function handleMessage(msg, ctx) {
 }
 function cmdServe(opts) {
   if (opts.stdio) { cmdServeStdio(opts); return; }
+  const legacyEnvError = legacyIdentityEnvError();
+  if (legacyEnvError) {
+    console.error(legacyEnvError);
+    process.exit(2);
+  }
+  if (opts.agent || opts.agentId) {
+    console.error('HTTP MCP 不接受 --agent/--agent-id 启动参数：身份只从请求头 Authorization + X-Agent-Id + X-Agent-Key 读取。');
+    process.exit(2);
+  }
   const host = opts.host || '0.0.0.0';
   const port = opts.port || 8787;
   const noAuth = !!opts.noAuth;
   const root = userRoot();
   ensureInit(root);
   function authorize(req) {
-    const agentId = String(req.headers['x-agent-id'] || '');
+    const agentId = String(req.headers['x-agent-id'] || '').trim();
     const agentKey = String(req.headers['x-agent-key'] || '').trim();
     const toolProfile = normalizeMcpToolProfile(opts.toolProfile);
-    if (noAuth) return { agent: agentId, agentKey: agentKey, toolProfile: toolProfile };
+    if (noAuth) return { agent: agentId, agentKey: agentKey, toolProfile: toolProfile, identityMode: 'headers' };
+    if (!agentId || !agentKey) return null;
     const auth = req.headers['authorization'] || '';
     const m = /^Bearer\s+(.+)$/i.exec(auth);
     if (!m) return null;
     const token = m[1].trim();
     const agent = agentId;
     const tokenMap = (loadTokens(root).tokens) || {};
-    if (tokenMap[agent] && tokenMap[agent].token === token) return { agent: agent, agentKey: agentKey, toolProfile: toolProfile };
+    if (tokenMap[agent] && tokenMap[agent].token === token) return { agent: agent, agentKey: agentKey, toolProfile: toolProfile, identityMode: 'headers' };
     return null;
   }
   function originAllowed(req) {
@@ -5000,9 +5879,32 @@ function cmdServe(opts) {
 }
 // ---- stdio 本地零进程模式（客户端按需拉起 CLI）----
 function cmdServeStdio(opts) {
+  const legacyEnvError = legacyIdentityEnvError();
+  if (legacyEnvError) {
+    console.error(legacyEnvError);
+    process.exit(2);
+  }
+  if (opts.agent) {
+    console.error('stdio MCP 不接受 --agent：请使用显式参数 --agent-id <id> + --agent-key-file <path>。');
+    process.exit(2);
+  }
+  if (opts.agentKey) {
+    console.error('stdio MCP 不接受 --agent-key：命令行会暴露 key；请使用 --agent-key-file <path>。');
+    process.exit(2);
+  }
+  const ident = resolveIdentity(opts);
+  if (ident.error) {
+    console.error(ident.error);
+    process.exit(2);
+  }
   const root = userRoot();
   ensureInit(root);
-  const ctx = { agent: currentAgent(), agentKey: trustedEnvAgentKey(), toolProfile: normalizeMcpToolProfile(opts && opts.toolProfile) };
+  const ctx = {
+    agent: ident.id,
+    agentKey: ident.agentKey,
+    toolProfile: normalizeMcpToolProfile(opts && opts.toolProfile),
+    identityMode: 'stdio-args',
+  };
   let buf = '';
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', function (chunk) {
@@ -5037,7 +5939,7 @@ function lanTaskRunCmd(opts) {
   const port = opts.port || 8787;
   // schtasks /tr 不接受多余内嵌引号：路径无空格不加引号，含空格/引号用 \" 转义（0.5.2 修复）
   const q = (p) => /[\s"]/.test(p) ? '\\"' + p.replace(/"/g, '\\"') + '\\"' : p;
-  return q(process.execPath) + ' ' + q(__filename) + ' serve --host ' + host + ' --port ' + port;
+  return q(process.execPath) + ' ' + q(runtimeManagedScript()) + ' serve --host ' + host + ' --port ' + port;
 }
 
 function lanServeArgs(opts) {
@@ -5091,7 +5993,7 @@ function lanAutostartCmdContent(opts) {
   return '@echo off\r\n'
     + 'chcp 65001 >nul\r\n'
     + 'rem ' + LAN_GEN_MARKER + '; remove with: yotta-memory lan disable (English only, keep ASCII)\r\n'
-    + q(process.execPath) + ' ' + q(__filename) + ' serve --host ' + host + ' --port ' + port + ' >> ' + q(lanLogPath(opts)) + ' 2>&1\r\n';
+    + q(process.execPath) + ' ' + q(runtimeManagedScript()) + ' serve --host ' + host + ' --port ' + port + ' >> ' + q(lanLogPath(opts)) + ' 2>&1\r\n';
 }
 function lanVbsContent(opts) {
   // v0.6.3 自愈：VBS 内联 autostart.cmd 内容，启动时若 .cmd 缺失/被清理即就地重建，
@@ -5168,7 +6070,7 @@ function lanLinuxUnitPath() { return path.join(lanLinuxSystemdUserDir(), LAN_UNI
 function lanLinuxSystemctlBin() { return process.env.YOTTA_LAN_SYSTEMCTL_BIN || 'systemctl'; }
 function lanLinuxLoginctlBin() { return process.env.YOTTA_LAN_LOGINCTL_BIN || 'loginctl'; }
 function lanLinuxExecStart(opts) {
-  return [systemdEscapeArg(process.execPath), systemdEscapeArg(__filename)].concat(lanServeArgs(opts)).join(' ');
+  return [systemdEscapeArg(process.execPath), systemdEscapeArg(runtimeManagedScript())].concat(lanServeArgs(opts)).join(' ');
 }
 function lanLinuxUnitContent(opts) {
   // keep comments ASCII (avoid locale/encoding issues); ExecStart uses systemd's own quote rules
@@ -5191,7 +6093,7 @@ function lanLinuxUnitContent(opts) {
 }
 function lanCrontabBin() { return process.env.YOTTA_LAN_CRONTAB_BIN || 'crontab'; }
 function lanCrontabLine(opts) {
-  const parts = ['@reboot', shQuote(process.execPath), shQuote(__filename)].concat(lanServeArgs(opts));
+  const parts = ['@reboot', shQuote(process.execPath), shQuote(runtimeManagedScript())].concat(lanServeArgs(opts));
   return parts.join(' ') + ' >> ' + shQuote(lanLogPath(opts)) + ' 2>&1 ' + LAN_CRONTAB_MARKER;
 }
 function lanCrontabRead() {
@@ -5432,6 +6334,11 @@ function cmdLanWinStatus() {
 }
 
 function cmdLanEnable(opts) {
+  const runtime = runtimeEnsureForManagedTask();
+  if (runtime.error) {
+    console.error('runtime 稳定入口未就绪，拒绝注册开机自启: ' + runtime.text);
+    process.exit(1);
+  }
   const p = lanPlatform();
   if (p === 'win32') return cmdLanWinEnable(opts);
   if (p === 'linux') return cmdLanLinuxEnable(opts);
@@ -5953,6 +6860,36 @@ function appendDedupBlock(lines, root, opts) {
 
 
 // ---- usage / main ----
+function cmdRuntimeInstall(arg, opts) {
+  let result;
+  if (opts.fromCurrent) result = runtimeInstallFromCurrent(opts);
+  else if (!arg) {
+    console.error('runtime install 需要 <tarball|版本>，或使用 --from-current。');
+    process.exit(2);
+  } else if (/\.tgz$/i.test(arg) || fs.existsSync(path.resolve(arg))) {
+    result = runtimeInstallTarball(arg, '', opts);
+  } else {
+    result = runtimeInstallVersion(arg, opts);
+  }
+  console.log(result.text);
+  if (result.error) process.exit(2);
+}
+function cmdRuntimeUse(version, opts) {
+  const result = runtimeUseCore(version, opts);
+  console.log(result.text);
+  if (result.error) process.exit(2);
+}
+function cmdRuntimeRollback(opts) {
+  const result = runtimeRollbackCore(opts);
+  console.log(result.text);
+  if (result.error) process.exit(2);
+}
+function cmdRuntimeStatus() {
+  console.log(runtimeStatusCore().text);
+}
+function cmdRuntimeList() {
+  console.log(runtimeListCore().text);
+}
 function usage() {
   const banner = 'yotta-memory v' + VERSION + ' — 元忆：有权限边界的文件式智能体记忆';
   const sections = [
@@ -5963,7 +6900,7 @@ function usage() {
       ['forget', '删除一条记忆'],
       ['archive', '归档（--days/--threshold 盖棺分+年龄）'],
       ['backup', '备份记忆库（volumes / setup / status / ensure-daily / schedule / create / list / doctor / restore <id> --to <目录> / drill）'],
-      ['doctor', '开工可靠性检查（根目录/密钥库/索引/身份/最近备份；严重异常时锁定破坏性写入）'],
+      ['doctor', '开工可靠性检查（根目录/密钥库/索引/身份/最近备份；--runtime 加查 CLI/current/MCP/进程/技能副本漂移）'],
       ['maintain', '记忆自组织（归档/遗忘候选/去重/合并；默认 dry-run；--dedup 查重+置信度，--dedup --apply 自动合并高置信组）'],
       ['consolidate', '周期摘要压缩（默认 dry-run；--apply 执行；--undo <batch> 回滚；--batches 查批次；候选=超龄+闲置+低效用，immutable/BOUND 豁免）'],
       ['distill', '心理日志蒸馏（统计摘要/主题画像/知识地图；--model 可选外部模型）'],
@@ -5989,6 +6926,7 @@ function usage() {
     ]],
     ['平台与服务', [
       ['serve', '启动 MCP 记忆引擎（streamable HTTP；--stdio 本地零进程；--tools core|full 控制工具分组）'],
+      ['runtime', '运行时稳定入口（list / install <tarball|版本> [--from-current] [--force] / use <版本> [--restart] / rollback [--restart] / status）'],
       ['lan', '开机自启管理（enable/disable/status；Windows 计划任务 / Linux systemd/crontab）'],
       ['--version', '版本']
     ]]
@@ -6003,7 +6941,7 @@ function usage() {
     lines.push('');
   }
   lines.push('类型: FACT(公共共享) / PREF(偏好) / BOUND(边界) / COMMIT(承诺)');
-  lines.push('环境变量: YOTTA_MEMORY_HOME 临时覆盖用户级位置; MCP 身份必须同时设置 YOTTA_AGENT_ID + YOTTA_MEMORY_AGENT_KEY + YOTTA_MEMORY_TRUST_ENV_AGENT=1；CLI 用 --agent + --agent-key/--agent-key-file');
+  lines.push('环境变量: YOTTA_MEMORY_HOME 临时覆盖用户级位置; 身份不再读取 env；CLI 用 --agent + --agent-key/--agent-key-file，stdio MCP 用 --agent-id + --agent-key-file，HTTP MCP 用请求头');
   lines.push('隔离: 公共 FACT 在 facts/；私密 PREF/BOUND/COMMIT 物理分目录 private/<agent_id>/<type>/，禁止 shell 直读写记忆库，一律走本命令');
   lines.push('远端接入: MCP url http://<主机IP>:8787/mcp；请求头 Authorization: Bearer <token> + X-Agent-Id: <id> + X-Agent-Key: <agent_key>');
   console.log(lines.join('\n'));
@@ -6013,7 +6951,7 @@ async function main() {
   if (!args.length) { usage(); return; }
   const opts = {};
   const positional = [];
-  const valueOpts = new Set(['--type', '--limit', '--days', '--out', '--owner', '--agent', '--agent-key', '--agent-key-file', '--threshold', '--scope', '--host', '--port', '--dir', '--name', '--user', '--relationship', '--source', '--weight', '--budget', '--password', '--new-password', '--recovery-key', '--reason', '--merge', '--model', '--subject', '--embedding', '--focus', '--embedding-timeout', '--min-age', '--min-idle', '--max-utility', '--min-group', '--period', '--to', '--id', '--time', '--tools']);
+  const valueOpts = new Set(['--type', '--limit', '--days', '--out', '--owner', '--agent', '--agent-id', '--agent-key', '--agent-key-file', '--threshold', '--scope', '--host', '--port', '--dir', '--name', '--user', '--relationship', '--source', '--weight', '--budget', '--password', '--new-password', '--recovery-key', '--reason', '--merge', '--model', '--subject', '--embedding', '--focus', '--embedding-timeout', '--min-age', '--min-idle', '--max-utility', '--min-group', '--period', '--to', '--id', '--time', '--tools', '--mcp-config', '--skill-dir']);
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--version' || a === '-v') { console.log(VERSION); return; }
@@ -6024,6 +6962,8 @@ async function main() {
     else if (a === '--no-auth') opts.noAuth = true;
     else if (a === '--stdio') opts.stdio = true;
     else if (a === '--onstart') opts.onstart = true;
+    else if (a === '--from-current') opts.fromCurrent = true;
+    else if (a === '--restart') opts.restart = true;
     else if (a === '--force') opts.force = true;
     else if (a === '--attach') opts.attach = true;
     else if (a === '--allow-same-volume') opts.allowSameVolume = true;
@@ -6044,6 +6984,7 @@ async function main() {
     else if (a === '--batches') opts.batches = true;
     else if (a === '--explain') opts.explain = true;
     else if (a === '--semantic') opts.semantic = true;
+    else if (a === '--runtime') opts.runtime = true;
     else if (valueOpts.has(a)) {
       const v = args[++i];
       if (a === '--type') opts.type = v;
@@ -6053,6 +6994,7 @@ async function main() {
       else if (a === '--out') opts.out = v;
       else if (a === '--owner') opts.owner = v;
       else if (a === '--agent') opts.agent = v;
+      else if (a === '--agent-id') opts.agentId = v;
       else if (a === '--agent-key') opts.agentKey = v;
       else if (a === '--agent-key-file') opts.agentKeyFile = v;
       else if (a === '--scope') opts.scope = v;
@@ -6084,6 +7026,8 @@ async function main() {
       else if (a === '--id') opts.id = v;
       else if (a === '--time') opts.time = v;
       else if (a === '--tools') opts.toolProfile = v;
+      else if (a === '--mcp-config') opts.mcpConfigPaths = (opts.mcpConfigPaths || []).concat(v);
+      else if (a === '--skill-dir') opts.skillDirs = (opts.skillDirs || []).concat(v);
     } else if (a.startsWith('--')) {
       if (a === '--query') {
         console.error('未知选项: --query。recall/search 的关键词是位置参数：yotta-memory recall [关键词]');
@@ -6178,6 +7122,16 @@ async function main() {
       else { console.error('key 子命令: list / bind <id> / rotate <id> / claim <id> --to <AI_HOME> / status <id> / revoke <id>'); process.exit(2); }
       break;
     }
+    case 'runtime': {
+      const sub = rest[0];
+      if (sub === 'install') cmdRuntimeInstall(rest[1], opts);
+      else if (sub === 'use') cmdRuntimeUse(rest[1], opts);
+      else if (sub === 'rollback') cmdRuntimeRollback(opts);
+      else if (sub === 'status') cmdRuntimeStatus();
+      else if (sub === 'list') cmdRuntimeList();
+      else { console.error('runtime 子命令: list / install <tarball|版本> [--from-current] [--force] / use <版本> [--restart] / rollback [--restart] / status'); process.exit(2); }
+      break;
+    }
     case 'serve': cmdServe(opts); break;
     case 'lan': {
       const sub = rest[0];
@@ -6225,6 +7179,28 @@ module.exports = {
   collectEntryFiles: collectEntryFiles,
   migrateLayout: migrateLayout,
   typeSubdir: typeSubdir,
+  runtimeRoot: runtimeRoot,
+  runtimeManifestPath: runtimeManifestPath,
+  runtimeVersionsDir: runtimeVersionsDir,
+  runtimeVersionDir: runtimeVersionDir,
+  runtimeCurrentDir: runtimeCurrentDir,
+  runtimeCurrentBin: runtimeCurrentBin,
+  runtimeExecutionPath: runtimeExecutionPath,
+  runtimeManagedScript: runtimeManagedScript,
+  runtimeTreeHash: runtimeTreeHash,
+  runtimeListVersions: runtimeListVersions,
+  runtimeSwitchCurrent: runtimeSwitchCurrent,
+  runtimeInstallFromCurrent: runtimeInstallFromCurrent,
+  runtimeInstallTarball: runtimeInstallTarball,
+  runtimeInstallVersion: runtimeInstallVersion,
+  runtimeValidateTarballEntries: runtimeValidateTarballEntries,
+  runtimeUseCore: runtimeUseCore,
+  runtimeRollbackCore: runtimeRollbackCore,
+  runtimeStatusCore: runtimeStatusCore,
+  runtimeListCore: runtimeListCore,
+  runtimeDoctorCore: runtimeDoctorCore,
+  runtimeEnsureForManagedTask: runtimeEnsureForManagedTask,
+  runtimeRestartManagedServer: runtimeRestartManagedServer,
   lanTaskRunCmd: lanTaskRunCmd,
   lanStartupDir: lanStartupDir,
   lanAutostartDir: lanAutostartDir,
