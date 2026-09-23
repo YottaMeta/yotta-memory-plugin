@@ -42,12 +42,12 @@ Codex is verified by YottaMeta. Other clients are linked from the official Agent
 
 ### Identity handshake (host substitution)
 
-This plugin ships `mcp.json` with identity placeholders (`${AGENT_ID}, ${AGENT_KEY_FILE}`). The client/installer must replace them when assembling the MCP server; the raw placeholder values are not usable.
+This plugin ships `mcp.json` with identity placeholders (`${AGENT_ID}, ${AGENT_KEY_FILE}`) and a launcher that resolves them at start-up. If the client replaces the placeholders, those values win; otherwise the launcher falls back to environment variables and to `<PLUGIN_DATA>/identity.json`.
 
 - `${AGENT_ID}` — this agent's unique id (single path segment; no `/`, `\`, `..`).
 - `${AGENT_KEY_FILE}` — path to the `agent_key` file for that id, created by the user via `yotta-memory view` and `yotta-memory key claim <id>`; the default is `<AI_HOME>/.yotta-memory-agent-key`.
 
-Without a replaced identity the server still starts, but private memory operations (PREF / BOUND / COMMIT) fail closed; public FACT operations keep working. The v0.16.0 stdio identity contract accepts only `--agent-id` + `--agent-key-file`; identity environment variables are no longer read.
+Without a resolved identity the server still starts, but private memory operations (PREF / BOUND / COMMIT) fail closed and the launcher prints an actionable binding guide; public FACT operations keep working. To bind, authorize in `yotta-memory view`, then run `yotta-memory key claim <id> --to <PLUGIN_DATA>`, or write `<PLUGIN_DATA>/identity.json` (`{"agent_id":"<id>"}`). The stdio identity contract still accepts only `--agent-id` + `--agent-key-file`.
 
 
 ### Boundaries
@@ -103,12 +103,12 @@ Codex 已由 YottaMeta 实测；其他客户端仅链接官方说明，尚未在
 
 ### 身份装配（宿主替换占位符）
 
-本插件发布的 `mcp.json` 带身份占位符（`${AGENT_ID}, ${AGENT_KEY_FILE}`），客户端 / 安装器在装配 MCP server 时必须替换，未替换的原始值不可用。
+本插件发布的 `mcp.json` 带身份占位符（`${AGENT_ID}, ${AGENT_KEY_FILE}`），并自带启动器在运行时解析身份：客户端已替换时优先用替换值，未替换则回退到环境变量与 `<PLUGIN_DATA>/identity.json`。
 
 - `${AGENT_ID}` — 本智能体的唯一 id（单段名称，禁止 `/`、`\`、`..`）。
 - `${AGENT_KEY_FILE}` — 该 id 的 `agent_key` 文件路径，由用户执行 `yotta-memory view` 授权后经 `yotta-memory key claim <id>` 领取，默认 `<AI_HOME>/.yotta-memory-agent-key`。
 
-宿主未替换身份时 server 仍可启动，但私密记忆（PREF / BOUND / COMMIT）操作 fail-closed，公共 FACT 不受影响。v0.16.0 的 stdio 身份契约只接受 `--agent-id` + `--agent-key-file`，不再读取身份环境变量。
+宿主未替换身份时 server 仍可启动，但私密记忆（PREF / BOUND / COMMIT）操作 fail-closed 并给出可执行的绑定指引，公共 FACT 不受影响。绑定方式：在 `yotta-memory view` 授权后执行 `yotta-memory key claim <id> --to <PLUGIN_DATA>`，或写入 `<PLUGIN_DATA>/identity.json`（`{"agent_id":"<id>"}`）。stdio 身份契约仍只接受 `--agent-id` + `--agent-key-file`。
 
 
 ### 边界

@@ -5,7 +5,7 @@
       "type": "stdio",
       "command": "node",
       "args": [
-        "${PLUGIN_ROOT}/skills/yotta-memory/bin/yotta-memory.js",
+        "${PLUGIN_ROOT}/skills/yotta-memory/bin/plugin-mcp.js",
         "serve",
         "--stdio",
         "--tools",
