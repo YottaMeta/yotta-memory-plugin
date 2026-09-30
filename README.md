@@ -33,6 +33,8 @@ Agent Plugins defines the package format, not a universal installer command. Use
 | Grok Bot | [Skills, routines, and automations](https://docs.x.ai/grok-bot/skills-routines-and-automations) |
 | NanoClaw | [Templates](https://github.com/nanocoai/nanoclaw/blob/main/docs/templates.md) |
 
+
+
 Codex is verified by YottaMeta. Other clients are linked from the official Agent Plugins compatibility page and are not yet verified here.
 
 ### What you get
@@ -93,6 +95,8 @@ Agent Plugins 只定义包格式，不定义统一安装命令。请按你所用
 | OpenClaw | [Plugin bundles](https://docs.openclaw.ai/plugins/bundles) |
 | Grok Bot | [Skills, routines, and automations](https://docs.x.ai/grok-bot/skills-routines-and-automations) |
 | NanoClaw | [Templates](https://github.com/nanocoai/nanoclaw/blob/main/docs/templates.md) |
+
+
 
 Codex 已由 YottaMeta 实测；其他客户端仅链接官方说明，尚未在本仓库逐项实测。
 
