@@ -101,9 +101,16 @@
   .field{margin-bottom:12px}
   .field label{display:block;color:var(--muted);font-size:12px;margin-bottom:6px}
   .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .owner-pick{display:flex;flex-wrap:wrap;gap:6px;max-height:132px;overflow:auto;margin-bottom:8px}
+  .owner-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:999px;padding:5px 10px;font-size:12px}
+  .owner-chip:hover{color:var(--text);border-color:var(--line2)}
+  .owner-chip.active{color:var(--gold);border-color:var(--line2);background:rgba(240,161,58,.12)}
+  .owner-chip .tag{font-size:10px;color:var(--faint);border:1px solid var(--line);border-radius:999px;padding:0 6px}
+  .owner-chip.active .tag{color:var(--gold);border-color:var(--line2)}
 
   .mask{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;place-items:center;z-index:50;padding:20px}
   .mask.open{display:grid}
+  #drawerMask{z-index:40}
   .modal{width:min(560px,100%);max-height:86vh;overflow:auto;background:var(--panel);border:1px solid var(--line2);border-radius:10px;padding:18px;box-shadow:var(--shadow)}
   .modal h3{margin:0 0 10px;font-size:16px}
   .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
@@ -301,6 +308,16 @@
     if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
     return (n / 1024 / 1024).toFixed(2) + ' MB';
   }
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function fmtTime(e) {
+    if (e && e.mtime) {
+      var d = new Date(e.mtime);
+      if (!isNaN(d.getTime())) {
+        return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+      }
+    }
+    return (e && (e.updated || e.created)) || '';
+  }
   function toast(msg, actionLabel, fn) {
     var el = document.createElement('div');
     el.className = 'toast';
@@ -408,7 +425,7 @@
       var t = String(e.type || 'FACT').toUpperCase();
       return '<div class="row" data-file="' + esc(e.file) + '"><div class="row-main"><span class="badge ' + t.toLowerCase() + '">' + typeNames[t] + '</span>' +
         '<div class="row-title">' + esc(e.subject) + '</div><div class="row-snippet">' + esc(e.statement) + '</div>' +
-        '<div class="row-meta">' + esc(e.owner || '公共') + ' · ' + esc(e.updated || e.created || '') + ' · ' + esc(e.file) + '</div></div>' +
+        '<div class="row-meta">' + esc(e.owner || '公共') + ' · ' + esc(fmtTime(e)) + ' · ' + esc(e.file) + '</div></div>' +
         '<div class="row-actions"><button class="ibtn" data-act="edit" title="编辑"><svg class="sv" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>' +
         '<button class="ibtn" data-act="archive" title="藏起来（归档）"><svg class="sv" viewBox="0 0 24 24"><path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 10 8 10 8a17.5 17.5 0 0 1-2.16 3.19"/><path d="M6.6 6.6A16.8 16.8 0 0 0 2 12s3 8 10 8a9.6 9.6 0 0 0 5.4-1.6"/><path d="m2 2 20 20"/></svg></button>' +
         '<button class="ibtn" data-act="delete" title="删除"><svg class="sv" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button></div></div>';
@@ -420,7 +437,7 @@
     await loadEntries();
     var recent = state.entries.slice(0, 4).map(function (e) {
       var t = String(e.type || 'FACT').toUpperCase();
-      return '<div class="row"><div class="row-main"><div class="row-title">' + esc(e.subject) + '</div><div class="row-meta">' + esc(e.owner || '公共') + ' · ' + esc(e.updated || e.created || '') + '</div></div><span class="badge ' + t.toLowerCase() + '">' + typeNames[t] + '</span></div>';
+      return '<div class="row"><div class="row-main"><div class="row-title">' + esc(e.subject) + '</div><div class="row-meta">' + esc(e.owner || '公共') + ' · ' + esc(fmtTime(e)) + '</div></div><span class="badge ' + t.toLowerCase() + '">' + typeNames[t] + '</span></div>';
     }).join('');
     $('#recentList').innerHTML = recent || '<div class="faint">还没有记忆。</div>';
   }
@@ -442,9 +459,11 @@
     state.current = entry;
     var t = String(entry.type || 'FACT').toUpperCase();
     $('#drTitle').textContent = entry.subject || '(无标题)';
-    $('#drMeta').textContent = typeNames[t] + ' · ' + (entry.owner || '公共') + ' · ' + (entry.updated || entry.created || '');
+    $('#drMeta').textContent = typeNames[t] + ' · ' + (entry.owner || '公共') + ' · ' + fmtTime(entry);
     $('#drBody').textContent = entry.statement || '';
-    $('#drKv').innerHTML = '<dt>文件</dt><dd>' + esc(entry.file) + '</dd><dt>可见性</dt><dd>' + (t === 'FACT' ? '所有已授权 AI' : '仅 ' + esc(entry.owner) + '（私密）') + '</dd><dt>标签</dt><dd>' + esc((entry.tags || []).join(', ') || '-') + '</dd>';
+    $('#drKv').innerHTML = '<dt>创建</dt><dd>' + esc(entry.btime ? fmtTime({ mtime: entry.btime }) : (entry.created || '-')) + '</dd>' +
+      '<dt>最近更新</dt><dd>' + esc(fmtTime(entry) || '-') + '</dd>' +
+      '<dt>文件</dt><dd>' + esc(entry.file) + '</dd><dt>可见性</dt><dd>' + (t === 'FACT' ? '所有已授权 AI' : '仅 ' + esc(entry.owner) + '（私密）') + '</dd><dt>标签</dt><dd>' + esc((entry.tags || []).join(', ') || '-') + '</dd>';
     openDrawer();
   }
   $('#drEdit').addEventListener('click', function () { if (state.current) { closeDrawer(); openEditor(state.current); } });
@@ -454,7 +473,11 @@
     var t = entry ? String(entry.type || 'FACT').toUpperCase() : 'FACT';
     return '<div class="field"><label>类型</label><select id="fType"' + (isNew ? '' : ' disabled') + '>' +
       ['FACT', 'PREF', 'BOUND', 'COMMIT'].map(function (x) { return '<option value="' + x + '"' + (x === t ? ' selected' : '') + '>' + typeNames[x] + '</option>'; }).join('') + '</select></div>' +
-      '<div class="field" id="fOwnerWrap"><label>归属 AI（私密记忆必填）</label><input id="fOwner" list="ownerList" placeholder="如 codex" value="' + esc(entry && entry.owner || '') + '"><datalist id="ownerList">' + state.owners.map(function (o) { return '<option value="' + esc(o.owner) + '">'; }).join('') + '</datalist></div>' +
+      '<div class="field" id="fOwnerWrap"><label>归属 AI（私密记忆必填；点选或输入自定义 ID）</label>' +
+      '<div class="owner-pick" id="fOwnerPick">' + (state.owners.length ? state.owners.map(function (o) {
+        return '<button type="button" class="owner-chip' + ((entry && entry.owner === o.owner) ? ' active' : '') + '" data-owner="' + esc(o.owner) + '">' + esc(o.owner) + '<span class="tag">' + (o.authorized ? '已授权' : '未授权') + '</span></button>';
+      }).join('') : '<span class="faint">还没有已登记的 AI；可直接输入自定义 ID。</span>') + '</div>' +
+      '<input id="fOwner" placeholder="自定义 AI ID（如 codex）" value="' + esc(entry && entry.owner || '') + '"></div>' +
       '<div class="field"><label>标题 subject</label><input id="fSubject" value="' + esc(entry && entry.subject || '') + '"></div>' +
       '<div class="field"><label>内容 statement</label><textarea id="fStatement">' + esc(entry && entry.statement || '') + '</textarea></div>' +
       '<div class="field"><label>标签（逗号分隔）</label><input id="fTags" value="' + esc(entry && (entry.tags || []).join(', ') || '') + '"></div>' +
@@ -464,6 +487,20 @@
     var t = $('#fType') ? $('#fType').value : 'FACT';
     var wrap = $('#fOwnerWrap');
     if (wrap) wrap.hidden = (t === 'FACT');
+  }
+  function bindOwnerPicker() {
+    var pick = $('#fOwnerPick');
+    if (!pick) return;
+    pick.addEventListener('click', function (e) {
+      var chip = e.target.closest('.owner-chip');
+      if (!chip) return;
+      Array.prototype.forEach.call(pick.querySelectorAll('.owner-chip'), function (c) { c.classList.toggle('active', c === chip); });
+      $('#fOwner').value = chip.dataset.owner;
+    });
+    $('#fOwner').addEventListener('input', function () {
+      var v = $('#fOwner').value.trim();
+      Array.prototype.forEach.call(pick.querySelectorAll('.owner-chip'), function (c) { c.classList.toggle('active', c.dataset.owner === v); });
+    });
   }
   function openEditor(entry) {
     openModal('编辑记忆', editorHtml(entry, false), {
@@ -483,6 +520,7 @@
         refreshAll();
       },
     });
+    bindOwnerPicker();
   }
   $('#btnNew').addEventListener('click', function () {
     openModal('新建记忆', editorHtml(null, true), {
@@ -500,6 +538,7 @@
         refreshAll();
       },
     });
+    bindOwnerPicker();
     syncOwnerField();
     $('#fType').addEventListener('change', syncOwnerField);
   });
