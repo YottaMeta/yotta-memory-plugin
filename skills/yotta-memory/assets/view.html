@@ -347,6 +347,9 @@
       return data;
     } catch (e) { return { error: String(e) }; }
   }
+  function errText(r, fallback) {
+    return r && r.error ? ((r.text || r.message || fallback) || '操作失败') : '';
+  }
   function fmtBytes(n) {
     n = Number(n) || 0;
     if (n < 1024) return n + ' B';
@@ -454,7 +457,7 @@
   }
   async function loadEntries() {
     var d = await api('/api/entries', { query: state.query, offset: state.offset, limit: state.limit, type: state.type === 'all' ? '' : state.type });
-    if (d.error) { toast(d.error); return; }
+    if (d.error) { toast(errText(d, '加载失败')); return; }
     state.entries = d.entries || [];
     state.count = d.count || 0;
     var totalPg = Math.max(1, Math.ceil(state.count / state.limit));
@@ -562,11 +565,11 @@
         var type = String(entry.type || 'FACT').toUpperCase();
         if (type === 'FACT' && $('#fOwner') && !$('#fOwner').disabled) body.owner = $('#fOwner').value.trim();
         var r = await api('/api/memory/update', body);
-        if (r.error) { toast(r.error); return; }
+        if (r.error) { toast(errText(r, '保存失败')); return; }
         closeModal();
         toast('已更新 1 条记忆' + (r.ownerChange ? '（归属已改为 ' + (r.ownerChange.to || '公共') + '）' : ''), '撤销', async function () {
           var u = await api('/api/memory/restore', { ref: r.undo });
-          toast(u.error || '已撤销这次编辑');
+          toast(errText(u, '撤销失败') || '已撤销这次编辑');
           refreshAll();
         });
         refreshAll();
@@ -584,7 +587,7 @@
         var tags = $('#fTags').value.split(',').map(function (x) { return x.trim(); }).filter(Boolean);
         if (!subject || !statement) { toast('标题与内容不能为空'); return; }
         var r = await api('/api/memory/create', { type: type, owner: owner, subject: subject, statement: statement, tags: tags });
-        if (r.error) { toast(r.error); return; }
+        if (r.error) { toast(errText(r, '创建失败')); return; }
         closeModal();
         toast('已创建 1 条记忆');
         refreshAll();
@@ -597,11 +600,11 @@
   function doDelete(entry) {
     confirmModal('删除这条记忆？', '将移入回收区（不物理删除），可从「最近删除」恢复。', '删除', true, async function () {
       var r = await api('/api/memory/delete', { file: entry.file });
-      if (r.error) { toast(r.error); return; }
+      if (r.error) { toast(errText(r, '删除失败')); return; }
       closeModal();
       toast('已删除 1 条记忆', '撤销', async function () {
         var u = await api('/api/memory/restore', { ref: r.trash });
-        toast(u.error || '已恢复');
+        toast(errText(u, '恢复失败') || '已恢复');
         refreshAll();
       });
       refreshAll();
@@ -610,11 +613,11 @@
   function doArchive(entry) {
     confirmModal('藏起来（归档）？', '归档后不参与召回，但数据保留，可随时放回。', '藏起来', false, async function () {
       var r = await api('/api/memory/archive', { file: entry.file });
-      if (r.error) { toast(r.error); return; }
+      if (r.error) { toast(errText(r, '归档失败')); return; }
       closeModal();
       toast('已藏起来 1 条', '放回', async function () {
         var u = await api('/api/memory/unarchive', { archive: r.archive });
-        toast(u.error || '已放回');
+        toast(errText(u, '放回失败') || '已放回');
         refreshAll();
       });
       refreshAll();
@@ -631,7 +634,7 @@
       var b = e.target.closest('button[data-unarch]');
       if (!b) return;
       var r = await api('/api/memory/unarchive', { archive: b.dataset.unarch });
-      toast(r.error || '已放回');
+      toast(errText(r, '放回失败') || '已放回');
       closeModal();
       refreshAll();
     }, { once: true });
@@ -646,7 +649,7 @@
       var b = e.target.closest('button[data-restore]');
       if (!b) return;
       var r = await api('/api/memory/restore', { ref: b.dataset.restore });
-      toast(r.error || '已恢复');
+      toast(errText(r, '恢复失败') || '已恢复');
       closeModal();
       refreshAll();
     }, { once: true });
@@ -679,13 +682,13 @@
       if (authorized) {
         confirmModal('吊销 ' + owner + ' 的授权？', '吊销后该智能体立即失去私密读写能力，旧 key 会立即校验失败。', '吊销', true, async function () {
           var r = await api('/api/revoke', { owner: owner });
-          closeModal(); toast(r.error || '已吊销'); loadOwners();
+          closeModal(); toast(errText(r, '吊销失败') || '已吊销'); loadOwners();
         });
       } else {
         confirmModal('授权 ' + owner + '？', '「授权」由你（用户）操作：确认后生成只显示一次的 agent_key，请立即单独保存；服务端同时写临时待领取文件 keys/pending/<agent_id>.key，供该 AI 新会话执行 key claim 领取，领取成功后自动删除。AI 不应代为执行该授权操作。', '授权', false, async function () {
           var r = await api('/api/authorize', { owner: owner });
           closeModal();
-          if (r.error) { toast(r.error); return; }
+          if (r.error) { toast(errText(r, '授权失败')); return; }
           openModal('agent_key（只显示一次）', '<p class="muted">请立即单独保存；AI 新会话执行 key status → key claim 领取。</p><textarea class="keybox" readonly>' + esc(r.agentKey) + '</textarea>', { okText: '我已保存', onOk: closeModal });
           var box = $('#modalBody').querySelector('textarea');
           if (box) { box.focus(); box.select(); }
@@ -701,7 +704,7 @@
           var typed = $('#confirmOwner').value.trim();
           if (typed !== target) { toast('ID 不匹配'); return; }
           var r = await api('/api/identity-remove', { owner: target, confirm: typed });
-          closeModal(); toast(r.error || '已删除'); loadOwners(); loadOverview(); loadEntries();
+          closeModal(); toast(errText(r, '删除失败') || '已删除'); loadOwners(); loadOverview(); loadEntries();
         },
       });
     }
@@ -712,17 +715,17 @@
     var a = $('#pwCur').value, b = $('#pwNew').value, c = $('#pwNew2').value;
     if (!b || b !== c) { $('#pwOut').textContent = '两次新口令不一致'; return; }
     var r = await api('/api/reset-password', { currentPassword: a, newPassword: b });
-    $('#pwOut').textContent = r.error || (r.text || '已重设');
+    $('#pwOut').textContent = r.error ? (r.text || '重设失败') : (r.text || '已重设');
     if (!r.error) { $('#pwCur').value = $('#pwNew').value = $('#pwNew2').value = ''; }
   });
   $('#btnRk').addEventListener('click', async function () {
     var r = await api('/api/recovery-key');
-    if (r.error) { toast(r.error); return; }
+    if (r.error) { toast(errText(r, '恢复钥匙读取失败')); return; }
     openModal('恢复钥匙（离线保存）', '<p class="muted">泄露等同口令泄露。忘记主口令时可用它重设。</p><textarea class="keybox" readonly>' + esc(r.recoveryKey) + '</textarea>', { okText: '我已保存', onOk: closeModal });
   });
   $('#btnExport').addEventListener('click', async function () {
     var r = await api('/api/export');
-    if (r.error) { toast(r.error); return; }
+    if (r.error) { toast(errText(r, '导出失败')); return; }
     var blob = new Blob([JSON.stringify(r, null, 2)], { type: 'application/json' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -818,7 +821,7 @@
   async function ensureHelp() {
     if (state.help) { renderQuick(); return; }
     var d = await api('/api/help');
-    if (!d || d.error) { toast((d && d.error) || '帮助加载失败'); return; }
+    if (!d || d.error) { toast(errText(d, '帮助加载失败')); return; }
     state.help = d;
     renderQuick();
   }
