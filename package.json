@@ -1,6 +1,6 @@
 {
   "name": "@yottameta/yotta-memory-plugin",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Yuanyi (元忆) — the next-generation memory engine whose data never leaves your machine, packaged as a YottaMeta Agent Plugin with a built-in MCP server.",
   "license": "MIT",
   "keywords": [
